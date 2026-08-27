@@ -1,0 +1,59 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Smart Home</title><style>
+:root{--bg:#f3f5f7;--card:#fff;--text:#17202a;--muted:#697586;--line:#e5e7eb;--accent:#2563eb;--on:#168a4b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}.wrap{width:min(900px,100%);margin:auto;padding:20px 14px 40px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 10px #0f172a0a}.row{display:flex;justify-content:space-between;align-items:center;gap:10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:650px){.grid{grid-template-columns:1fr}}input,button,select{font:inherit;padding:10px;border:1px solid #d5dae0;border-radius:9px}input,select{width:100%;margin:5px 0}button{background:#fff;cursor:pointer}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.muted{color:var(--muted);font-size:13px}.relay{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid #eee}.pill{font-size:12px;padding:4px 8px;border-radius:20px;background:#eef1f5}.online{background:#e7f5ec;color:#176a3b}.schedule{display:grid;grid-template-columns:70px 70px 70px 90px 1fr 55px;gap:6px;align-items:center;margin:10px 0;padding:10px;border:1px solid var(--line);border-radius:10px}.days{display:flex;gap:5px;flex-wrap:wrap}.days label{font-size:11px;display:flex;align-items:center;gap:2px}@media(max-width:650px){.schedule{grid-template-columns:1fr 1fr 1fr 1fr}.schedule .days{grid-column:1/-1}}.hidden{display:none}.danger{color:#b42318}.top{margin-bottom:18px}.small{font-size:12px}.section-title{font-weight:700;margin-bottom:8px}</style></head><body><main class="wrap"><header class="top row"><div><h1>Smart Home</h1><div class="muted">Secure remote control</div></div><button id="logout" class="hidden" onclick="logout()">Sign out</button></header><div id="app"></div></main><script>
+const $=x=>document.getElementById(x);let token=localStorage.getItem('shv2_token'),user=null,devices=[];
+async function api(p,o={}){o.headers={...(o.headers||{}),'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})};const r=await fetch(p,o);const d=await r.json().catch(()=>({}));if(r.status===401&&token&&p!=='/api/auth/login'){localStorage.removeItem('shv2_token');token=null;user=null;login();throw Error('Session expired. Please sign in again.')}if(!r.ok)throw Error(d.error||'Request failed');return d}
+function login(){ $('logout').classList.add('hidden'); $('app').innerHTML='<div class="card"><h2>Sign in</h2><input id="em" placeholder="Email" autocomplete="username"><input id="pw" type="password" placeholder="Password" autocomplete="current-password"><button class="primary" onclick="doLogin()">Sign in</button><div id="m" class="muted"></div></div>' }
+async function doLogin(){try{const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:$('em').value,password:$('pw').value})});token=d.token;user=d.user;localStorage.setItem('shv2_token',token);await home()}catch(e){$('m').textContent=e.message}}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function home(){ $('logout').classList.remove('hidden');const d=await api('/api/devices');devices=d.devices;let h='';if(user.role==='admin')h+=adminPanel();for(const x of devices)h+=deviceCard(x);if(!devices.length)h+='<div class="card">No devices assigned.</div>';$('app').innerHTML=h;for(const x of devices)loadSchedules(x.id)}
+function adminPanel(){return '<div class="card"><div class="section-title">Administration</div><div class="grid"><div><input id="newEmail" placeholder="New user email"><input id="newPass" type="password" placeholder="Password (12+ characters)"><select id="newRole"><option value="member">Operator</option><option value="viewer">Viewer</option></select><button onclick="addUser()">Add user</button></div><div><input id="devId" placeholder="Device ID"><input id="devName" placeholder="Device name"><button class="primary" onclick="addDevice()">Create device token</button></div><div><input id="grantDev" placeholder="Device ID to share"><input id="grantEmail" placeholder="User email"><select id="grantRole"><option value="operator">Operator</option><option value="viewer">Viewer</option></select><button onclick="grantUser()">Grant access</button><div id="adminMsg" class="muted"></div></div></div></div><div class="small muted">A newly created device token is shown once. Enter it in the ESP32 Internet Connection settings.</div></div>'}
+function deviceCard(x){let st=JSON.parse(x.states||'[0,0,0,0,0]'),en=JSON.parse(x.enabled||'[true,true,true,false,false]');let h='<div class="card"><div class="row"><div><h2>'+esc(x.name)+'</h2><div class="muted">'+esc(x.id)+'</div></div><span class="pill '+(x.online?'online':'')+'">'+(x.online?'Online':'Offline')+'</span></div>';for(let i=0;i<5;i++)if(en[i])h+='<div class="relay"><span>Relay '+(i+1)+'</span><button onclick="setRelay(\''+esc(x.id)+'\','+i+','+(st[i]?0:1)+')">'+(st[i]?'ON':'OFF')+'</button></div>';h+='<details><summary>Schedules</summary><div id="s-'+esc(x.id)+'">Loading...</div><button onclick="loadSchedules(\''+esc(x.id)+'\')">Refresh</button></details></div>';return h}
+async function setRelay(id,i,state){try{await api('/api/devices/'+encodeURIComponent(id)+'/relay',{method:'POST',body:JSON.stringify({relay:i+1,state})});setTimeout(home,900)}catch(e){alert(e.message)}}
+function dayBits(days){return [0,1,2,3,4,5,6].map(d=>!!(Number(days)&(1<<d)))}
+function schedRow(s={relay:1,hour:0,minute:0,action:1,days:127,enabled:1,durationMinutes:0}){
+ const labels=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'], bits=dayBits(s.days);
+ return '<div class="schedule">'+
+ '<select class="sr"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>'+
+ '<input class="sh" type="number" min="0" max="23" value="'+s.hour+'" aria-label="Hour">'+
+ '<input class="sm" type="number" min="0" max="59" value="'+s.minute+'" aria-label="Minute">'+
+ '<select class="sa"><option value="1">ON</option><option value="0">OFF</option></select>'+
+ '<input class="sd" type="number" min="0" max="1439" value="'+Number(s.durationMinutes||0)+'" aria-label="Duration minutes">'+
+ '<div class="days">'+labels.map((x,i)=>'<label><input class="day" type="checkbox" data-day="'+i+'" '+(bits[i]?'checked':'')+'>'+x+'</label>').join('')+'</div>'+
+ '<label><input class="se" type="checkbox" '+(s.enabled?'checked':'')+'>On</label>'+
+ '</div>';
+}
+function scheduleEditor(id,rows){
+ let h='<div class="muted">Up to 64 local schedules. Choose any weekdays; the ESP32 caches them and executes them locally even during Internet outages.</div><div id="rows-'+esc(id)+'">';
+ for(const s of rows)h+=schedRow(s);
+ h+='</div><div class="bar"><button onclick="addSchedule(\''+esc(id)+'\')">Add schedule</button><button class="primary" onclick="saveSchedules(\''+esc(id)+'\')">Save schedules</button></div>';
+ return h;
+}
+async function loadSchedules(id){try{const d=await api('/api/devices/'+encodeURIComponent(id)+'/schedules');const el=$('s-'+id);if(el)el.innerHTML=scheduleEditor(id,d.schedules||[]);const rows=el?.querySelectorAll('.schedule')||[];rows.forEach((r,i)=>{const s=(d.schedules||[])[i];if(s){r.querySelector('.sr').value=s.relay;r.querySelector('.sa').value=s.action;r.querySelector('.sd').value=Number(s.durationMinutes||0)}})}catch(e){const el=$('s-'+id);if(el)el.textContent=e.message}}
+function addSchedule(id){const box=$('rows-'+id);if(box&&box.children.length<64)box.insertAdjacentHTML('beforeend',schedRow())}
+async function saveSchedules(id){
+ const box=$('rows-'+id);
+ const schedules=[...box.querySelectorAll('.schedule')].map(r=>{
+   let days=0;
+   r.querySelectorAll('.day').forEach(cb=>{if(cb.checked)days|=1<<Number(cb.dataset.day)});
+   return {
+     relay:+r.querySelector('.sr').value,
+     hour:+r.querySelector('.sh').value,
+     minute:+r.querySelector('.sm').value,
+     action:+r.querySelector('.sa').value,
+     durationMinutes:Math.max(0,Math.min(1439,+r.querySelector('.sd').value||0)),
+     days,
+     enabled:r.querySelector('.se').checked
+   };
+ }).filter(s=>s.days>0);
+ try{
+   await api('/api/devices/'+encodeURIComponent(id)+'/schedules',{method:'POST',body:JSON.stringify({schedules})});
+   await loadSchedules(id);
+   alert('Schedules saved. The ESP32 will execute its cached copy locally.');
+ }catch(e){alert(e.message)}
+}
+async function grantUser(){try{await api('/api/admin/grant',{method:'POST',body:JSON.stringify({deviceId:$('grantDev').value,email:$('grantEmail').value,role:$('grantRole').value})});$('adminMsg').textContent='Device access granted.'}catch(e){$('adminMsg').textContent=e.message}}
+async function addUser(){try{const r=await api('/api/admin/users',{method:'POST',body:JSON.stringify({email:$('newEmail').value,password:$('newPass').value,role:$('newRole').value})});$('adminMsg').textContent='User created: '+r.id}catch(e){$('adminMsg').textContent=e.message}}
+async function addDevice(){try{const r=await api('/api/admin/devices',{method:'POST',body:JSON.stringify({id:$('devId').value,name:$('devName').value})});$('adminMsg').textContent='Device token (copy now): '+r.token+'. Refresh the dashboard after saving it to the ESP32.'}catch(e){$('adminMsg').textContent=e.message}}
+async function logout(){try{await api('/api/auth/logout',{method:'POST'})}catch{}localStorage.removeItem('shv2_token');token=null;user=null;login()}
+(async()=>{if(!token){login();return}try{const d=await api('/api/auth/me');user=d.user;await home()}catch{localStorage.removeItem('shv2_token');token=null;login()}})();
+</script></body></html>
