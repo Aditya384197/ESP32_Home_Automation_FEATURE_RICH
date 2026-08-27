@@ -1,0 +1,66 @@
+name: Build ESP32 Smart Home
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: smart-home-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        idf-version: ["v5.1.2"]
+        target: ["esp32"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: ${{ matrix.idf-version }}
+          target: ${{ matrix.target }}
+          path: '.'
+
+      - name: Verify build artifacts
+        run: |
+          test -n "$(find build -maxdepth 1 -type f -name '*.bin' -print -quit)"
+          test -s build/bootloader/bootloader.bin
+          test -s build/partition_table/partition-table.bin
+          test -n "$(find build -maxdepth 1 -type f -name '*.elf' -print -quit)"
+          echo "=== Build artifacts ==="
+          find build -maxdepth 3 -type f \
+            \( -name "*.bin" -o -name "*.elf" \) \
+            -printf '%p %s bytes\\n' | sort
+
+      - name: Generate SHA-256 checksums
+        run: |
+          # The ESP-IDF build action may leave the build directory owned by
+          # the container user. Keep the checksum manifest in the workspace
+          # root instead of redirecting into build/.
+          rm -f SHA256SUMS.txt
+          sha256sum \
+            build/smart_home.bin \
+            build/bootloader/bootloader.bin \
+            build/partition_table/partition-table.bin \
+            > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload complete firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target }}-${{ matrix.idf-version }}
+          path: |
+            build/*.bin
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/*.elf
+            SHA256SUMS.txt
+          if-no-files-found: error
