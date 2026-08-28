@@ -2093,7 +2093,7 @@ static void mqtt_publish_ha_discovery(void)
     if (!mqtt_client || !mqtt_connected) return;
     for (int i = 0; i < RELAY_COUNT; ++i) {
         if (!relay_enabled[i]) continue;
-        char uniq[80], cmd_t[96], state_t[96], avail_t[80];
+        char uniq[128], cmd_t[128], state_t[128], avail_t[128];
         snprintf(uniq, sizeof(uniq), "%s_relay%d", mqtt_base_topic, i + 1);
         for (char *p = uniq; *p; ++p) if (*p == '/') *p = '_';
         snprintf(cmd_t, sizeof(cmd_t), "%s/relay/%d/set", mqtt_base_topic, i + 1);
@@ -2125,7 +2125,7 @@ static void mqtt_publish_ha_discovery(void)
         char *payload = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
         if (!payload) continue;
-        char cfg_topic[128];
+        char cfg_topic[192];
         snprintf(cfg_topic, sizeof(cfg_topic), "homeassistant/switch/%s/config", uniq);
         esp_mqtt_client_publish(mqtt_client, cfg_topic, payload, 0, 1, true);
         free(payload);
@@ -2135,7 +2135,7 @@ static void mqtt_publish_ha_discovery(void)
 static void mqtt_publish_relay_state(int idx)
 {
     if (!mqtt_client || !mqtt_connected || idx < 0 || idx >= RELAY_COUNT) return;
-    char topic[96];
+    char topic[128];
     snprintf(topic, sizeof(topic), "%s/relay/%d/state", mqtt_base_topic, idx + 1);
     int state;
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
@@ -2185,7 +2185,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t event_i
     switch (event_id) {
     case MQTT_EVENT_CONNECTED: {
         mqtt_connected = true;
-        char avail_t[80], sub_t[96];
+        char avail_t[128], sub_t[128];
         snprintf(avail_t, sizeof(avail_t), "%s/status", mqtt_base_topic);
         esp_mqtt_client_publish(mqtt_client, avail_t, "online", 0, 1, true);
         snprintf(sub_t, sizeof(sub_t), "%s/relay/+/set", mqtt_base_topic);
@@ -2230,7 +2230,7 @@ static void mqtt_start(void)
     char uri[MAX_MQTT_HOST_LEN + 16];
     snprintf(uri, sizeof(uri), "mqtt://%s:%u", mqtt_host, (unsigned)mqtt_port);
 
-    char avail_t[80];
+    char avail_t[128];
     snprintf(avail_t, sizeof(avail_t), "%s/status", mqtt_base_topic);
 
     esp_mqtt_client_config_t cfg = {0};
