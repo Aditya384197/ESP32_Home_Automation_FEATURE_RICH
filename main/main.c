@@ -132,7 +132,7 @@ static char mqtt_pass[MAX_MQTT_PASS_LEN + 1] = "";
 static bool mqtt_enabled = false;
 static esp_mqtt_client_handle_t mqtt_client = NULL;
 static volatile bool mqtt_connected = false;
-static char mqtt_base_topic[64] = "";
+static char mqtt_base_topic[96] = "";
 
 static TaskHandle_t dns_task_handle = NULL;
 static TaskHandle_t switch_task_handle = NULL;
