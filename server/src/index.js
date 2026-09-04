@@ -68,7 +68,7 @@ async function api(env,req,url){
   }
   if(p==='/api/device/poll'&&req.method==='POST'){
     const d=await deviceToken(env,req);if(!d)return json({error:'unauthorized'},401);const b=await body(req);if(b?.deviceId!==d.id)return json({error:'device id mismatch'},403);
-    const states=Array.isArray(b.states)?Array.from({length:5},(_,i)=>b.states[i]?1:0):[0,0,0,0,0];const enabled=Array.isArray(b.enabled)?Array.from({length:5},(_,i)=>!!b.enabled[i]):[true,true,true,false,false];
+    const states=Array.isArray(b.states)?Array.from({length:10},(_,i)=>b.states[i]?1:0):Array(10).fill(0);const enabled=Array.isArray(b.enabled)?Array.from({length:10},(_,i)=>b.enabled[i]!==false):Array(10).fill(true);
     const ackIds=Array.isArray(b.ackIds)?b.ackIds.filter(x=>Number.isInteger(Number(x))).map(Number).slice(0,64):[];
     await env.DB.prepare('UPDATE devices SET online=1,last_seen=?,states=?,enabled=? WHERE id=?').bind(now(),JSON.stringify(states),JSON.stringify(enabled),d.id).run();
     if(ackIds.length) await env.DB.prepare(`UPDATE commands SET acknowledged_at=? WHERE device_id=? AND id IN (${ackIds.map(()=>'?').join(',')})`).bind(now(),d.id,...ackIds).run();
