@@ -102,6 +102,7 @@
 #define MAX_MQTT_PASS_LEN       63
 
 static int relay_state[RELAY_COUNT] = {0};
+static int64_t relay_state_since_us[RELAY_COUNT] = {0};
 static bool relay_enabled[RELAY_COUNT] = {true,true,true,true,true,true,true,true,true,true};
 static char relay_name[RELAY_COUNT][MAX_RELAY_NAME_LEN + 1] = {
     "Relay 1","Relay 2","Relay 3","Relay 4","Relay 5",
@@ -146,6 +147,20 @@ static bool schedule_override[RELAY_COUNT] = {0};
 static int schedule_revert_state[RELAY_COUNT] = {0};
 static volatile bool g_time_synced = false;
 
+static void relay_mark_state_changed(int index)
+{
+    if (index < 0 || index >= RELAY_COUNT) return;
+    relay_state_since_us[index] = esp_timer_get_time();
+}
+
+static uint32_t relay_state_age_seconds(int index)
+{
+    if (index < 0 || index >= RELAY_COUNT || relay_state_since_us[index] <= 0) return 0;
+    int64_t age = esp_timer_get_time() - relay_state_since_us[index];
+    if (age < 0) age = 0;
+    return (uint32_t)(age / 1000000LL);
+}
+
 static void schedule_note_manual_change(int index)
 {
     if (index < 0 || index >= RELAY_COUNT) return;
@@ -185,7 +200,7 @@ static const char *HTML_PAGE =
 ".relay-row{display:flex;align-items:center;justify-content:space-between;gap:15px;min-height:62px;padding:0 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);cursor:pointer;user-select:none;-webkit-user-select:none;transition:background-color .18s cubic-bezier(.25,.8,.25,1),transform .16s cubic-bezier(.25,.8,.25,1),box-shadow .18s ease;max-width:680px;margin:0 auto;width:100%}\n"
 ".relay-row:active{background:var(--press);transform:scale(.982);box-shadow:0 1px 2px rgba(0,0,0,.06)}\n"
 ".room-card{background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:0 3px 12px rgba(0,0,0,.055);overflow:hidden;min-width:0}.room-head{display:flex;align-items:center;justify-content:space-between;min-height:62px;padding:0 18px;cursor:pointer}.room-title{font-size:17px;font-weight:700}.room-count{font-size:11px;color:var(--muted);margin-top:2px}.room-chevron{font-size:22px;color:var(--muted);transition:transform .22s ease}.room-card.open .room-chevron{transform:rotate(90deg)}.room-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s ease}.room-card.open .room-panel{grid-template-rows:1fr}.room-panel-inner{overflow:hidden;padding:0 10px}.room-card.open .room-panel-inner{padding-bottom:10px}.room-panel .relay-row{min-height:56px;margin-top:8px;box-shadow:none}\n"
-".relay-row .name{font-weight:650;font-size:17px}\n"
+".relay-row .name{font-weight:650;font-size:17px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:font-size .12s ease}\n"
 ".relay-row .state{font-size:12.5px;color:var(--muted);margin-top:3px;letter-spacing:.3px;text-transform:uppercase}\n"
 ".switch{position:relative;width:54px;height:31px;flex:none;pointer-events:none}\n"
 ".switch input{opacity:0;width:0;height:0}\n"
@@ -198,7 +213,7 @@ static const char *HTML_PAGE =
 ".msg{font-size:13px;margin-top:10px;color:var(--muted)}.small{font-size:12px;color:var(--muted);line-height:1.45}\n"
 "input[type=text],input[type=password],input[type=file],input[type=number],select{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}\n"
 "label.field{display:block;font-size:13px;color:var(--muted);margin:13px 0 6px}.hidden{display:none!important}\n"
-".status{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}.connection-label{display:none}.dot{width:9px;height:9px;border-radius:50%;background:#8b8b8b}.dot.online{background:var(--text);box-shadow:0 0 0 4px var(--press)}.dot.forced-offline{background:var(--danger)}.online-text{color:var(--text);font-weight:650}\n"
+".status{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}.connection-label{display:none}.dot{width:9px;height:9px;border-radius:50%;background:#8b8b8b}.dot.online{background:var(--text);box-shadow:0 0 0 4px var(--press)}.dot.retry{background:transparent;border:2px solid var(--text);box-shadow:0 0 0 2px var(--press);animation:retryPulse 1s ease-in-out infinite}@keyframes retryPulse{50%{opacity:.35;transform:scale(.8)}}.dot.forced-offline{background:var(--danger)}.online-text{color:var(--text);font-weight:650}\n"
 ".conn-toggle{margin-left:6px;padding:5px 10px;font-size:11px;border-radius:20px}.conn-toggle.active{background:var(--danger);border-color:var(--danger);color:#fff}\n"
 ".list-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 2px;border-top:1px solid var(--line);cursor:pointer;transition:background-color .12s ease}\n"
 ".list-row:first-child{border-top:0}.list-row:active{background:var(--press)}\n"
@@ -221,8 +236,8 @@ static const char *HTML_PAGE =
 ".back-row{margin-top:20px;text-align:center}.back-btn{min-width:180px}.drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.34);opacity:0;pointer-events:none;transition:opacity .28s ease;z-index:90}\n"
 ".settings-drawer{position:fixed;z-index:100;top:0;right:0;width:min(680px,100%);height:100dvh;background:var(--bg);box-shadow:-12px 0 35px rgba(0,0,0,.18);transform:translate3d(105%,0,0);transition:transform .34s cubic-bezier(.22,.8,.2,1);overflow-y:auto;overscroll-behavior:contain;will-change:transform}\n"
 ".settings-drawer.open{transform:translate3d(0,0,0)}.drawer-backdrop.open{opacity:1;pointer-events:auto}body.settings-open .app{filter:none}\n"
-".drawer-inner{min-height:100%;padding:18px 14px 34px}.drawer-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 4px 18px}\n"
-".drawer-title{font-size:23px;font-weight:700}.drawer-sub{font-size:14px;color:var(--muted);margin-top:4px}.drawer-status{margin-top:8px}\n"
+".drawer-inner{min-height:100%;padding:18px 14px 34px}.drawer-top{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:center;gap:12px;padding:8px 4px 18px}\n"
+".drawer-title{font-size:23px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.drawer-sub{font-size:14px;color:var(--muted);margin-top:4px}.drawer-status{margin-top:8px}\n"
 ".icon-btn{width:42px;height:42px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;flex:none}\n"
 ".subpage{display:none}.subpage.active{display:block;animation:pageIn .28s cubic-bezier(.22,.8,.2,1) both}@keyframes pageIn{from{opacity:0;transform:translate3d(16px,0,0)}to{opacity:1;transform:none}}\n"
 ".page-title{font-size:21px;font-weight:700;margin:0}.page-sub{font-size:13px;color:var(--muted);margin-top:4px}.page-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}.page-head .icon-btn{flex:none}\n"
@@ -238,7 +253,7 @@ static const char *HTML_PAGE =
 "<div class=\"app\">\n"
 "<header class=\"top\"><div class=\"topbar\">\n"
 "<div class=\"brand\"><h1 id=\"brandTitle\">Smart Home</h1></div>\n"
-"<button class=\"settings-btn\" onclick=\"openSettings()\" aria-label=\"Settings\" title=\"Settings\">⚙</button>\n"
+"<button class=\"settings-btn\" onclick=\"openSettings()\" aria-label=\"Settings\" title=\"Settings\">\u2699</button>\n"
 "</div></header>\n"
 "<section id=\"controls\"></section>\n"
 "</div>\n"
@@ -248,33 +263,33 @@ static const char *HTML_PAGE =
 "<div class=\"drawer-inner\">\n"
 "<section id=\"settingsHome\" class=\"subpage active\">\n"
 "<header class=\"drawer-top\">\n"
+"<button class=\"icon-btn\" onclick=\"closeSettings()\" aria-label=\"Back\" title=\"Back\">\u2190</button>\n"
 "<div><div class=\"drawer-title\">Settings</div><div class=\"drawer-sub\">Device configuration</div>\n"
-"<div class=\"drawer-status status\"><span id=\"onlineDot\" class=\"dot\" title=\"Connection status\"></span><span id=\"onlineText\" class=\"connection-label\"></span><button id=\"connToggle\" class=\"conn-toggle\" onclick=\"toggleConnectivity()\" title=\"Toggle online/offline\">◉</button></div></div>\n"
-"<button class=\"icon-btn\" onclick=\"closeSettings()\" aria-label=\"Back\">←</button>\n"
+"<div class=\"drawer-status status\"><span id=\"onlineDot\" class=\"dot\" title=\"Connection status\"></span><span id=\"onlineText\" class=\"connection-label\"></span><button id=\"connToggle\" class=\"conn-toggle\" onclick=\"toggleConnectivity()\" title=\"Toggle online/offline\">\u25c9</button></div></div>\n"
 "</header>\n"
-"<div class=\"card setting-list\"><div class=\"setting-item\" onclick=\"openSubPage('appearancePage')\"><div class=\"setting-icon\">◐</div><div><div class=\"setting-title\">Appearance</div></div><div class=\"chevron\">›</div></div></div>\n"
 "<div class=\"card setting-list\">\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('schedulePage')\"><div class=\"setting-icon\">◷</div><div><div class=\"setting-title\">Schedules</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('brandPage')\"><div class=\"setting-icon\">✎</div><div><div class=\"setting-title\">Custom Logo / Name</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('relayPage')\"><div class=\"setting-icon\">▣</div><div><div class=\"setting-title\">Relay Configuration</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('internetPage')\"><div class=\"setting-icon\">◎</div><div><div class=\"setting-title\">Internet Connection</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('remotePage')\"><div class=\"setting-icon\">☁</div><div><div class=\"setting-title\">Remote Access</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('mqttPage')\"><div class=\"setting-icon\">⌁</div><div><div class=\"setting-title\">MQTT / Home Assistant</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('apPage')\"><div class=\"setting-icon\">≋</div><div><div class=\"setting-title\">AP Configuration</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('diagPage')\"><div class=\"setting-icon\">◈</div><div><div class=\"setting-title\">Diagnostics</div></div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('appearancePage')\"><div class=\"setting-icon\">\u25d0</div><div><div class=\"setting-title\">Appearance</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('schedulePage')\"><div class=\"setting-icon\">\u25f7</div><div><div class=\"setting-title\">Schedules</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('brandPage')\"><div class=\"setting-icon\">\u270e</div><div><div class=\"setting-title\">Custom Logo / Name</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('relayPage')\"><div class=\"setting-icon\">\u25a3</div><div><div class=\"setting-title\">Relay Configuration</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('internetPage')\"><div class=\"setting-icon\">\u25ce</div><div><div class=\"setting-title\">Internet Connection</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('remotePage')\"><div class=\"setting-icon\">\u2601</div><div><div class=\"setting-title\">Remote Access</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('mqttPage')\"><div class=\"setting-icon\">\u2301</div><div><div class=\"setting-title\">MQTT / Home Assistant</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('apPage')\"><div class=\"setting-icon\">\u224b</div><div><div class=\"setting-title\">AP Configuration</div></div><div class=\"chevron\">\u203a</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('diagPage')\"><div class=\"setting-icon\">\u25c8</div><div><div class=\"setting-title\">Diagnostics</div></div><div class=\"chevron\">\u203a</div></div>\n"
 "</div>\n"
 "</section>\n"
 "\n"
-"<section id=\"appearancePage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Appearance</div></div></div><div class=\"info-card\"><div class=\"theme-seg\" id=\"themeSeg\"><button data-th=\"auto\" onclick=\"setTheme('auto')\">Auto</button><button data-th=\"light\" onclick=\"setTheme('light')\">Light</button><button data-th=\"dark\" onclick=\"setTheme('dark')\">Dark</button></div></div></section><section id=\"schedulePage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Schedules</div><div class=\"page-sub\">Stored locally on the ESP32; Internet is not required for execution.</div></div></div>\n"
+"<section id=\"appearancePage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Appearance</div></div></div><div class=\"info-card\"><div class=\"theme-seg\" id=\"themeSeg\"><button data-th=\"auto\" onclick=\"setTheme('auto')\">Auto</button><button data-th=\"light\" onclick=\"setTheme('light')\">Light</button><button data-th=\"dark\" onclick=\"setTheme('dark')\">Dark</button></div></div></section><section id=\"schedulePage\" class=\"subpage\">\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Schedules</div><div class=\"page-sub\">Stored locally on the ESP32; Internet is not required for execution.</div></div></div>\n"
 "<div class=\"card\" style=\"padding:4px 14px\"><div id=\"scheduleList\"></div></div>\n"
-"<div class=\"bar\"><button onclick=\"addSchedule()\">＋ Add schedule</button></div>\n"
+"<div class=\"bar\"><button onclick=\"addSchedule()\">\uff0b Add schedule</button></div>\n"
 "<div id=\"scheduleMsg\" class=\"msg\"></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "\n"
 "<section id=\"scheduleDetailPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backFromScheduleDetail()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Schedule</div><div class=\"page-sub\">Runs locally from the ESP32 clock, independent of Internet.</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backFromScheduleDetail()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Schedule</div><div class=\"page-sub\">Runs locally from the ESP32 clock, independent of Internet.</div></div></div>\n"
 "<div class=\"info-card\">\n"
 "<div class=\"schedule-grid\">\n"
 "<div><label class=\"field\">Relay</label><select id=\"sdRelay\"></select></div>\n"
@@ -287,7 +302,7 @@ static const char *HTML_PAGE =
 "<div><label class=\"field\">Duration minutes</label><input id=\"sdDurM\" type=\"number\" min=\"0\" max=\"59\" value=\"0\" oninput=\"updateScheduleDetailEnd()\"></div>\n"
 "</div>\n"
 "<label class=\"field\">After the duration</label>\n"
-"<div class=\"time-readout\" id=\"sdEndReadout\">—</div>\n"
+"<div class=\"time-readout\" id=\"sdEndReadout\">\u2014</div>\n"
 "<label class=\"field\">Repeat on</label>\n"
 "<div class=\"days\" id=\"scheduleDays\"></div>\n"
 "<label class=\"small\" style=\"display:block;margin-top:16px\"><input id=\"sdEnabled\" type=\"checkbox\"> Enabled</label>\n"
@@ -298,24 +313,31 @@ static const char *HTML_PAGE =
 "</section>\n"
 "\n"
 "<section id=\"brandPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Custom Logo / Name</div><div class=\"page-sub\">Personalize the title shown on the main page</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Custom Logo / Name</div><div class=\"page-sub\">Personalize the title shown on the main page</div></div></div>\n"
 "<div class=\"info-card\">\n"
 "<label class=\"field\">Main page text</label><input id=\"brandInput\" type=\"text\" maxlength=\"40\" placeholder=\"Smart Home\">\n"
 "<div class=\"small\">This changes the text only; it does not affect relay names or firmware identity.</div>\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveBrand()\">Save</button></div>\n"
 "<div id=\"brandMsg\" class=\"msg\"></div>\n"
 "</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "\n"
 "<section id=\"relayPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Relay Configuration</div><div class=\"page-sub\">Relay 1-3 are fixed; Relay 4-5 are optional</div></div></div>\n"
-"<div class=\"info-card relay-config\"><div id=\"relayConfigList\"></div><div class=\"bar\"><button class=\"primary\" onclick=\"saveRelayConfig()\">Save Relay Configuration</button></div><div id=\"relaymsg\" class=\"msg\"></div></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Relay Configuration</div><div class=\"page-sub\">Relay 1-3 are fixed; Relay 4-10 are optional</div></div></div>\n"
+"<div class=\"info-card relay-config\">\n"
+"<div class=\"section-title\">Rooms</div>\n"
+"<label class=\"field\">Room 2</label><input type=\"text\" id=\"room2Name\" maxlength=\"31\">\n"
+"<label class=\"field\">Room 1</label><input type=\"text\" id=\"room1Name\" maxlength=\"31\">\n"
+"<label class=\"field\">Room 3</label><input type=\"text\" id=\"room3Name\" maxlength=\"31\">\n"
+"<div class=\"section-title\" style=\"margin-top:18px\">Relays</div>\n"
+"<div id=\"relayConfigList\"></div>\n"
+"<div class=\"bar\"><button class=\"primary\" onclick=\"saveRelayConfig()\">Save Relay Configuration</button></div><div id=\"relaymsg\" class=\"msg\"></div></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "\n"
 "<section id=\"internetPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Internet Connection</div><div class=\"page-sub\">Connect the ESP32 to your home Wi-Fi.</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Internet Connection</div><div class=\"page-sub\">Connect the ESP32 to your home Wi-Fi.</div></div></div>\n"
 "<div class=\"info-card\" id=\"wifiCard\">\n"
 "<div class=\"small\">Connects the ESP32 to your home Wi-Fi. Applies instantly, no restart needed.</div>\n"
 "<label class=\"field\">Home Wi-Fi SSID</label><input id=\"staSsid\" maxlength=\"32\">\n"
@@ -323,10 +345,10 @@ static const char *HTML_PAGE =
 "<div id=\"wifiStatus\" class=\"msg\">Not configured</div>\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveWifiSta()\">Connect Wi-Fi</button></div><div id=\"wifiMsg\" class=\"msg\"></div>\n"
 "</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "<section id=\"remotePage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Remote Access</div><div class=\"page-sub\">Optional. Control this device securely from outside your home network.</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Remote Access</div><div class=\"page-sub\">Optional. Control this device securely from outside your home network.</div></div></div>\n"
 "<div class=\"info-card\" id=\"cloudCard\">\n"
 "<div class=\"small\">Optional. Enables secure remote control from outside your home network. Applies instantly, no restart needed. Leave all three blank to disable.</div>\n"
 "<label class=\"field\">Cloud API URL</label><input id=\"cloudUrl\" type=\"text\" maxlength=\"191\" placeholder=\"https://your-domain.example\">\n"
@@ -335,10 +357,10 @@ static const char *HTML_PAGE =
 "<div id=\"cloudStatus\" class=\"msg\">Not configured</div>\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveCloud()\">Save Remote Access</button></div><div id=\"cloudMsg\" class=\"msg\"></div>\n"
 "</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "<section id=\"mqttPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">MQTT / Home Assistant</div><div class=\"page-sub\">Optional. Publishes relay state to a local broker and appears automatically in Home Assistant.</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">MQTT / Home Assistant</div><div class=\"page-sub\">Optional. Publishes relay state to a local broker and appears automatically in Home Assistant.</div></div></div>\n"
 "<div class=\"info-card\" id=\"mqttCard\">\n"
 "<label class=\"small\"><input id=\"mqttEnabled\" type=\"checkbox\"> Enable MQTT</label>\n"
 "<label class=\"field\">Broker host or IP</label><input id=\"mqttHost\" type=\"text\" maxlength=\"127\" placeholder=\"192.168.1.10\">\n"
@@ -348,25 +370,29 @@ static const char *HTML_PAGE =
 "<div id=\"mqttStatus\" class=\"msg\">Not configured</div>\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveMqtt()\">Save MQTT Settings</button></div><div id=\"mqttMsg\" class=\"msg\"></div>\n"
 "</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "\n"
 "<section id=\"apPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">AP Configuration</div><div class=\"page-sub\">Change the local ESP32 Wi-Fi settings</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">AP Configuration</div><div class=\"page-sub\">Change the local ESP32 Wi-Fi settings</div></div></div>\n"
 "<div class=\"info-card\"><label class=\"field\">SSID</label><input id=\"ssid\" maxlength=\"32\"><label class=\"field\">Password (8-63 characters)</label><input id=\"pass\" type=\"password\" maxlength=\"63\">\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveSettings()\">Save & Restart</button></div><div id=\"setmsg\" class=\"msg\"></div></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "<section id=\"diagPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Diagnostics</div><div class=\"page-sub\">Live device health, refreshed automatically</div></div></div>\n"
+"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">\u2190</button><div><div class=\"page-title\">Diagnostics</div><div class=\"page-sub\">Live device health, refreshed automatically</div></div></div>\n"
 "<div class=\"info-card\">\n"
-"<div class=\"diag-row\"><span>mDNS address</span><strong id=\"diagMdns\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Wi-Fi signal (RSSI)</span><strong id=\"diagRssi\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Free heap</span><strong id=\"diagHeap\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Lowest free heap since boot</span><strong id=\"diagMinHeap\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Uptime</span><strong id=\"diagUptime\">—</strong></div>\n"
+"<div class=\"diag-row\"><span>mDNS address</span><strong id=\"diagMdns\">\u2014</strong></div>\n"
+"<div class=\"diag-row\"><span>Wi-Fi signal (RSSI)</span><strong id=\"diagRssi\">\u2014</strong></div>\n"
+"<div class=\"diag-row\"><span>Free heap</span><strong id=\"diagHeap\">\u2014</strong></div>\n"
+"<div class=\"diag-row\"><span>Lowest free heap since boot</span><strong id=\"diagMinHeap\">\u2014</strong></div>\n"
+"<div class=\"diag-row\"><span>Uptime</span><strong id=\"diagUptime\">\u2014</strong></div>\n"
 "</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
+"<div class=\"info-card\">\n"
+"<div class=\"section-title\">Relay State Duration</div>\n"
+"<div id=\"relayDiagnostics\"></div>\n"
+"</div>\n"
+"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
 "</section>\n"
 "\n"
 "</div>\n"
@@ -385,6 +411,7 @@ static const char *HTML_PAGE =
 "}\n"
 "function setTheme(t){ try{localStorage.setItem('theme',t)}catch(e){} applyTheme(t); }\n"
 "applyTheme((function(){try{return localStorage.getItem('theme')||'auto'}catch(e){return 'auto'}})());\n"
+"window.addEventListener('resize',()=>fitRelayNames());\n"
 "\n"
 "function fitBrand(){\n"
 "  const el=$('brandTitle'); if(!el) return; const box=el.parentElement;\n"
@@ -395,8 +422,14 @@ static const char *HTML_PAGE =
 "function updateOnline(wifi,cloud,offline,timeSynced){\n"
 " userOffline=!!offline;\n"
 " const dot=$(\"onlineDot\"),btn=$(\"connToggle\");\n"
-" if(dot){dot.classList.toggle(\"online\",!!wifi&&!offline);dot.classList.toggle(\"forced-offline\",!!offline);dot.title=offline?\"Offline\":(wifi?(cloud?\"Connected / cloud\":\"Connected\"):\"Reconnecting\");dot.setAttribute(\"aria-label\",dot.title)}\n"
-" if(btn){btn.textContent=offline?\"▶\":\"◉\";btn.classList.toggle(\"active\",offline);btn.title=offline?\"Go online\":\"Go offline\"}\n"
+" if(dot){\n"
+"  dot.classList.toggle(\"online\",!!wifi&&!offline);\n"
+"  dot.classList.toggle(\"retry\",!wifi&&!offline);\n"
+"  dot.classList.toggle(\"forced-offline\",!!offline);\n"
+"  dot.title=offline?\"Offline\":(wifi?(cloud?\"Connected / cloud\":\"Connected\"):\"Reconnecting\");\n"
+"  dot.setAttribute(\"aria-label\",dot.title);\n"
+" }\n"
+" if(btn){btn.textContent=offline?\"\u25b6\":\"\u25c9\";btn.classList.toggle(\"active\",offline);btn.title=offline?\"Go online\":\"Go offline\";btn.setAttribute(\"aria-label\",btn.title)}\n"
 "}\n"
 "async function toggleConnectivity(){\n"
 "  const btn=$('connToggle');if(btn)btn.disabled=true;\n"
@@ -410,20 +443,35 @@ static const char *HTML_PAGE =
 "function relayRow(i){\n"
 " if(!relayCfg[i]||!relayCfg[i].enabled)return '';\n"
 " const on=!!states[i];\n"
-" return `<div class=\"relay-row\" onclick=\"rowToggle(${i})\"><div><div class=\"name\">${esc(relayCfg[i].name)}</div><div class=\"state\" id=\"st${i}\">${on?'ON':'OFF'}</div></div><span class=\"switch\"><input type=\"checkbox\" id=\"r${i}\" ${on?'checked':''} tabindex=\"-1\"><span class=\"slider\"></span></span></div>`;\n"
+" return `<div class=\"relay-row\" onclick=\"rowToggle(${i})\"><div><div class=\"name\">${esc(relayCfg[i].name)}</div></div><span class=\"switch\"><input type=\"checkbox\" id=\"r${i}\" ${on?'checked':''} tabindex=\"-1\"><span class=\"slider\"></span></span></div>`;\n"
 "}\n"
 "function roomCard(key,label,ids){\n"
 " const a=ids.filter(i=>relayCfg[i]&&relayCfg[i].enabled);\n"
-" return `<section class=\"room-card\" id=\"room-${key}\"><div class=\"room-head\" onclick=\"toggleRoom('${key}')\"><div><div class=\"room-title\">${esc(label)}</div><div class=\"room-count\">${a.length} relay${a.length===1?'':'s'}</div></div><span class=\"room-chevron\">›</span></div><div class=\"room-panel\"><div class=\"room-panel-inner\">${a.map(relayRow).join('')}</div></div></section>`;\n"
+" return `<section class=\"room-card\" id=\"room-${key}\"><div class=\"room-head\" onclick=\"toggleRoom('${key}')\"><div><div class=\"room-title\">${esc(label)}</div><div class=\"room-count\">${a.length} relay${a.length===1?'':'s'}</div></div><span class=\"room-chevron\">\u203a</span></div><div class=\"room-panel\"><div class=\"room-panel-inner\">${a.map(relayRow).join('')}</div></div></section>`;\n"
 "}\n"
 "function render(a){\n"
 " states=a||states;\n"
 " if(!controlsBuilt){\n"
 "  const rm=window.roomCfg||{room2:'Room 2',room1:'Room 1',room3:'Room 3'};\n"
 "  $('controls').innerHTML=relayRow(0)+relayRow(1)+relayRow(2)+roomCard('room2',rm.room2,[3])+roomCard('room1',rm.room1,[4,5,6])+roomCard('room3',rm.room3,[7,8,9]);\n"
-"  controlsBuilt=true;return;\n"
+"  controlsBuilt=true;\n"
+"  fitRelayNames();\n"
+"  return;\n"
 " }\n"
-" for(let i=0;i<relayCfg.length;i++){if(relayPending[i]||!relayCfg[i]?.enabled)continue;const on=!!states[i],e=$('r'+i),t=$('st'+i);if(e)e.checked=on;if(t)t.textContent=on?'ON':'OFF'}\n"
+" for(let i=0;i<relayCfg.length;i++){\n"
+"  if(relayPending[i]||!relayCfg[i]?.enabled)continue;\n"
+"  const on=!!states[i],e=$('r'+i);\n"
+"  if(e)e.checked=on;\n"
+" }\n"
+" fitRelayNames();\n"
+"}\n"
+"function fitRelayNames(){\n"
+" const els=[...document.querySelectorAll('#controls .relay-row .name')];\n"
+" if(!els.length)return;\n"
+" els.forEach(e=>e.style.fontSize='17px');\n"
+" let size=17;\n"
+" const maxW=()=>els.map(e=>e.parentElement.clientWidth).reduce((a,b)=>Math.min(a,b),Infinity);\n"
+" while(size>11 && els.some(e=>e.scrollWidth>e.parentElement.clientWidth+1)){size-=0.5;els.forEach(e=>e.style.fontSize=size+'px');}\n"
 "}\n"
 "function toggleRoom(k){const e=$('room-'+k);if(e)e.classList.toggle('open')}\n"
 "function rowToggle(i){setRelay(i,!states[i])}\n"
@@ -443,24 +491,45 @@ static const char *HTML_PAGE =
 "  updateDiagnostics(d);\n"
 " }catch(e){updateOnline(false,false,userOffline)}\n"
 "}\n"
+"function formatAge(sec){\n"
+" sec=Math.max(0,Math.floor(Number(sec)||0));\n"
+" const d=Math.floor(sec/86400);sec%=86400;\n"
+" const hr=Math.floor(sec/3600);sec%=3600;\n"
+" const min=Math.floor(sec/60);const s=sec%60;\n"
+" if(d)return `${d}d ${hr}h`;\n"
+" if(hr)return `${hr}h ${min}m`;\n"
+" if(min)return `${min}m ${s}s`;\n"
+" return `${s}s`;\n"
+"}\n"
 "function updateDiagnostics(d){\n"
 " const el=$('diagPage');if(!el||!el.classList.contains('active'))return;\n"
 " $('diagMdns').textContent=(d.mdnsHost||'smarthome')+'.local';\n"
 " $('diagRssi').textContent=(d.rssi==null)?'Not connected':(d.rssi+' dBm');\n"
-" $('diagHeap').textContent=(d.freeHeap!=null)?Math.round(d.freeHeap/1024)+' KB':'—';\n"
-" $('diagMinHeap').textContent=(d.minFreeHeap!=null)?Math.round(d.minFreeHeap/1024)+' KB':'—';\n"
+" $('diagHeap').textContent=(d.freeHeap!=null)?Math.round(d.freeHeap/1024)+' KB':'\u2014';\n"
+" $('diagMinHeap').textContent=(d.minFreeHeap!=null)?Math.round(d.minFreeHeap/1024)+' KB':'\u2014';\n"
 " if(d.uptimeSeconds!=null){\n"
 "  const s=d.uptimeSeconds,days=Math.floor(s/86400),hrs=Math.floor((s%86400)/3600),mins=Math.floor((s%3600)/60);\n"
 "  $('diagUptime').textContent=(days>0?days+'d ':'')+hrs+'h '+mins+'m';\n"
 " }\n"
+" const ages=d.stateAgeSeconds||[];\n"
+" const list=$('relayDiagnostics');\n"
+" if(list){\n"
+"  list.innerHTML=relayCfg.map((r,i)=>{\n"
+"   const age=ages[i];\n"
+"   return `<div class=\"diag-row\"><span>${esc(r.name||('Relay '+(i+1)))}</span><strong>${r.enabled?(states[i]?'ON \u00b7 ':'OFF \u00b7 ') + formatAge(age):'Disabled'}</strong></div>`;\n"
+"  }).join('');\n"
+" }\n"
 "}\n"
 "function setRelay(i,on){\n"
-" const seq=++relaySeq[i],target=on?1:0,previous=states[i]?1:0;states[i]=target;relayPending[i]=true;\n"
-" const el=$('r'+i),st=$('st'+i);if(el)el.checked=!!target;if(st)st.textContent=target?'ON':'OFF';\n"
-" if(relayTimers[i])clearTimeout(relayTimers[i]);if(relayRequests[i]){try{relayRequests[i].abort()}catch(e){}}\n"
-" relayTimers[i]=setTimeout(()=>{const ctl=new AbortController();relayRequests[i]=ctl;fetch(`/api/relay?relay=${i+1}&state=${target}`,{cache:'no-store',signal:ctl.signal})\n"
+" const seq=++relaySeq[i],target=on?1:0,previous=states[i]?1:0;\n"
+" states[i]=target;relayPending[i]=true;\n"
+" const el=$('r'+i);if(el)el.checked=!!target;\n"
+" if(relayTimers[i])clearTimeout(relayTimers[i]);\n"
+" if(relayRequests[i]){try{relayRequests[i].abort()}catch(e){}}\n"
+" const ctl=new AbortController();relayRequests[i]=ctl;\n"
+" fetch(`/api/relay?relay=${i+1}&state=${target}`,{cache:'no-store',signal:ctl.signal})\n"
 "  .then(r=>{if(!r.ok)throw new Error('Relay command failed');if(seq===relaySeq[i])relayPending[i]=false;})\n"
-"  .catch(e=>{if(e.name==='AbortError')return;if(seq===relaySeq[i]){relayPending[i]=false;states[i]=previous;const x=$('r'+i),s=$('st'+i);if(x)x.checked=!!previous;if(s)s.textContent=previous?'ON':'OFF';}});},0);\n"
+"  .catch(e=>{if(e.name==='AbortError')return;if(seq===relaySeq[i]){relayPending[i]=false;states[i]=previous;const x=$('r'+i);if(x)x.checked=!!previous;}});\n"
 "}\n"
 "function openSettings(){\n"
 " document.body.classList.add('settings-open');$('drawerBackdrop').classList.add('open');$('settingsDrawer').classList.add('open');$('settingsDrawer').setAttribute('aria-hidden','false');\n"
@@ -478,14 +547,39 @@ static const char *HTML_PAGE =
 "function backToSettings(){showSettingsHome()}\n"
 "\n"
 "function renderRelayConfig(){\n"
-" let h='';relayCfg.forEach((r,i)=>{const optional=i>=3;\n"
-"  h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay GPIO ${r.gpio}${optional?' · Optional':''}</div><div class=\"relay-switch-gpio\">Physical Switch GPIO ${r.switchGpio}</div></div>${optional?`<label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''} onchange=\"relayEnableChanged(${i})\"><span class=\"small-slider\"></span></label>`:''}</div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\" ${optional&&!r.enabled?'disabled':''}></div>`;\n"
-" });$('relayConfigList').innerHTML=h;\n"
+" let h='';\n"
+" relayCfg.forEach((r,i)=>{\n"
+"  const optional=i>=3;\n"
+"  h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay GPIO ${r.gpio}${optional?' \u00b7 Optional':''}</div><div class=\"relay-switch-gpio\">Physical Switch GPIO ${r.switchGpio>=0?r.switchGpio:'\u2014'}</div></div>${optional?`<label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''} onchange=\"relayEnableChanged(${i})\"><span class=\"small-slider\"></span></label>`:''}</div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\" ${optional&&!r.enabled?'disabled':''}></div>`;\n"
+" });\n"
+" $('relayConfigList').innerHTML=h;\n"
+" const rm=window.roomCfg||{room2:'Room 2',room1:'Room 1',room3:'Room 3'};\n"
+" if($('room2Name'))$('room2Name').value=rm.room2||'Room 2';\n"
+" if($('room1Name'))$('room1Name').value=rm.room1||'Room 1';\n"
+" if($('room3Name'))$('room3Name').value=rm.room3||'Room 3';\n"
 "}\n"
 "function relayEnableChanged(i){const en=$('en'+i).checked;$('rn'+i).disabled=!en}\n"
 "async function saveRelayConfig(){\n"
-" let body={};for(let i=0;i<10;i++){const enabled=i<3?true:$('en'+i).checked;let name=$('rn'+i).value.trim()||('Relay '+(i+1));if(name.length>31)return $('relaymsg').textContent='Relay name is too long.';body['r'+(i+1)+'_enabled']=enabled;body['r'+(i+1)+'_name']=name}\n"
-" $('relaymsg').textContent='Saving...';try{const r=await fetch('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'save failed');relayCfg=d.config||relayCfg;$('relaymsg').textContent='Saved successfully.';renderRelayConfig();render(states)}catch(e){$('relaymsg').textContent=e.message||'Save failed.'}\n"
+" const body={};\n"
+" for(let i=0;i<10;i++){\n"
+"  const enabled=i<3?true:$('en'+i).checked;\n"
+"  const name=$('rn'+i).value.trim()||('Relay '+(i+1));\n"
+"  if(name.length>31){$('relaymsg').textContent='Relay name is too long.';return}\n"
+"  body['r'+(i+1)+'_enabled']=enabled;\n"
+"  body['r'+(i+1)+'_name']=name;\n"
+" }\n"
+" const rooms={room2:(($('room2Name')?.value||'Room 2').trim()),room1:(($('room1Name')?.value||'Room 1').trim()),room3:(($('room3Name')?.value||'Room 3').trim())};\n"
+" for(const k of ['room2','room1','room3'])if(!rooms[k]||rooms[k].length>31){$('relaymsg').textContent='Invalid room name.';return}\n"
+" body.room2_name=rooms.room2;body.room1_name=rooms.room1;body.room3_name=rooms.room3;\n"
+" $('relaymsg').textContent='Saving...';\n"
+" try{\n"
+"  const r=await fetch('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});\n"
+"  const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'save failed');\n"
+"  relayCfg=d.config||relayCfg;\n"
+"  window.roomCfg=d.rooms||rooms;\n"
+"  $('relaymsg').textContent='Saved successfully.';\n"
+"  renderRelayConfig();controlsBuilt=false;render(states);\n"
+" }catch(e){$('relaymsg').textContent=e.message||'Save failed.'}\n"
 "}\n"
 "\n"
 "function timeFromMinutes(m){m=((m%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}\n"
@@ -495,7 +589,7 @@ static const char *HTML_PAGE =
 "function scheduleListRow(s,idx){\n"
 " const relay=Number(s.relay||1),h=Number(s.hour==null?0:s.hour),mi=Number(s.minute==null?0:s.minute),act=Number(s.action==null?1:s.action),en=s.enabled!==false&&s.enabled!==0;\n"
 " const h12=h%12===0?12:h%12,ap=h<12?'am':'pm';\n"
-" return `<div class=\"list-row${en?'':' row-disabled'}\" onclick=\"openScheduleDetail(${idx})\"><div class=\"list-row-text\"><strong>Relay ${relay} • ${act===1?'ON':'OFF'}</strong><span class=\"list-row-sub\">${h12}:${String(mi).padStart(2,'0')} ${ap}${en?'':' • disabled'}</span></div><span class=\"chevron\">›</span></div>`;\n"
+" return `<div class=\"list-row${en?'':' row-disabled'}\" onclick=\"openScheduleDetail(${idx})\"><div class=\"list-row-text\"><strong>Relay ${relay} \u2022 ${act===1?'ON':'OFF'}</strong><span class=\"list-row-sub\">${h12}:${String(mi).padStart(2,'0')} ${ap}${en?'':' \u2022 disabled'}</span></div><span class=\"chevron\">\u203a</span></div>`;\n"
 "}\n"
 "function renderSchedules(){\n"
 " $('scheduleList').innerHTML=schedules.map((s,i)=>scheduleListRow(s,i)).join('')||'<div class=\"small\" style=\"padding:14px 2px\">No schedules yet. Tap Add schedule.</div>';\n"
@@ -581,7 +675,7 @@ static const char *HTML_PAGE =
 " renderSchedules();\n"
 " openSubPage('schedulePage');\n"
 "}\n"
-"async function saveBrand(){const name=$('brandInput').value.trim(),m=$('brandMsg');if(!name||name.length>40)return m.textContent='Enter 1-40 characters.';m.textContent='Saving…';try{const r=await fetch('/api/brand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brandName:name})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');$('brandTitle').textContent=name;m.textContent='Saved successfully.'}catch(e){m.textContent=e.message||'Save failed.'}}\n"
+"async function saveBrand(){const name=$('brandInput').value.trim(),m=$('brandMsg');if(!name||name.length>40)return m.textContent='Enter 1-40 characters.';m.textContent='Saving\u2026';try{const r=await fetch('/api/brand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brandName:name})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');$('brandTitle').textContent=name;m.textContent='Saved successfully.'}catch(e){m.textContent=e.message||'Save failed.'}}\n"
 "\n"
 "async function loadWifiStatus(){try{const r=await fetch('/api/internet',{cache:'no-store'});const d=await r.json();$('staSsid').value=d.staSsid||'';$('staPass').value='';\n"
 " $('wifiStatus').textContent=!d.wifiConfigured?'Wi-Fi not configured yet.':d.connected?('Connected to home Wi-Fi. Open this address on any device on the same Wi-Fi: http://'+(d.staIp||'')):'Configured; waiting for connection. Automatic reconnect is active.';\n"
@@ -616,13 +710,12 @@ static const char *HTML_PAGE =
 " try{const r=await fetch('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mqttHost:host,mqttPort:port,mqttUser:user,mqttPass:pass,mqttEnabled:enabled})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent=enabled?'Saved. Connecting to broker\\\\u2026':'MQTT disabled.';setTimeout(loadMqtt,2500)}catch(e){m.textContent=e.message||'Could not save MQTT settings.'}\n"
 " finally{if(btn)btn.disabled=false}\n"
 "}\n"
-"async function saveSettings(){const ssid=$('ssid').value,pass=$('pass').value,m=$('setmsg');if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return m.textContent='Invalid SSID or password.';m.textContent='Saving and restarting…';try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});if(!r.ok)throw 0}catch(e){m.textContent='Connection lost. The AP may be restarting.'}}\n"
+"async function saveSettings(){const ssid=$('ssid').value,pass=$('pass').value,m=$('setmsg');if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return m.textContent='Invalid SSID or password.';m.textContent='Saving and restarting\u2026';try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});if(!r.ok)throw 0}catch(e){m.textContent='Connection lost. The AP may be restarting.'}}\n"
 "async function loadSettings(){try{const r=await fetch('/api/settings',{cache:'no-store'}),d=await r.json();$('ssid').value=d.ssid||''}catch(e){}}\n"
 "\n"
 "load();setInterval(load,2500);\n"
 "</script>\n"
-"</body></html>\n"
-;
+"</body></html>\n";
 
 static bool valid_ssid(const char *s)
 {
@@ -777,7 +870,9 @@ static void load_nvs(void)
     ESP_LOGI(TAG, "Restored relay states: %d %d %d %d %d %d %d %d %d %d",
              relay_state[0], relay_state[1], relay_state[2], relay_state[3], relay_state[4], relay_state[5], relay_state[6], relay_state[7], relay_state[8], relay_state[9]);
     ESP_LOGI(TAG, "Relay enabled: %d %d %d %d %d %d %d %d %d %d",
-             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4], relay_enabled[5], relay_enabled[6], relay_enabled[7], relay_enabled[8], relay_enabled[9]);
+             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4], relay_enabled[5], relay_enabled[6], relay_enabled[7], relay_enabled[8], relay_enabled[9]);    int64_t now_us = esp_timer_get_time();
+    for (int i = 0; i < RELAY_COUNT; ++i) relay_state_since_us[i] = now_us;
+
 }
 
 static esp_err_t save_relay_states(void)
@@ -945,6 +1040,7 @@ static void apply_remote_relay_state(int index, int state)
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
     if (relay_enabled[index] && relay_state[index] != (state ? 1 : 0)) {
         relay_state[index] = state ? 1 : 0;
+        relay_mark_state_changed(index);
         gpio_set_level(relay_gpio(index), relay_output_level(relay_state[index]));
         changed = true;
     }
@@ -1053,6 +1149,7 @@ static void apply_switch_command(int index, bool on)
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
     if (relay_enabled[index] && relay_state[index] != (int)on) {
         relay_state[index] = on ? 1 : 0;
+        relay_mark_state_changed(index);
         gpio_set_level(relay_gpio(index), relay_output_level(on ? 1 : 0));
         changed = true;
     }
@@ -1366,7 +1463,10 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON_AddBoolToObject(o,"enabled",enabled[i]); cJSON_AddStringToObject(o,"name",names[i]);
         cJSON_AddNumberToObject(o,"gpio",relay_gpio(i)); cJSON_AddNumberToObject(o,"switchGpio",i<SWITCH_COUNT?switch_gpio(i):-1); cJSON_AddItemToArray(config,o);
     }
-    cJSON_AddItemToObject(root,"states",states); cJSON_AddItemToObject(root,"config",config); cJSON *rooms=cJSON_CreateObject(); if(!rooms){cJSON_Delete(root);return send_json(req,"{\"error\":\"out of memory\"}","500 Internal Server Error");} cJSON_AddStringToObject(rooms,"room2",room_name[0]); cJSON_AddStringToObject(rooms,"room1",room_name[1]); cJSON_AddStringToObject(rooms,"room3",room_name[2]); cJSON_AddItemToObject(root,"rooms",rooms);
+    cJSON *ages = cJSON_CreateArray();
+    if (!ages) { cJSON_Delete(root); cJSON_Delete(states); cJSON_Delete(config); return send_json(req,"{\"error\":\"out of memory\"}","500 Internal Server Error"); }
+    for (int i=0;i<RELAY_COUNT;i++) cJSON_AddItemToArray(ages,cJSON_CreateNumber(relay_state_age_seconds(i)));
+    cJSON_AddItemToObject(root,"states",states); cJSON_AddItemToObject(root,"stateAgeSeconds",ages); cJSON_AddItemToObject(root,"config",config); cJSON *rooms=cJSON_CreateObject(); if(!rooms){cJSON_Delete(root);return send_json(req,"{\"error\":\"out of memory\"}","500 Internal Server Error");} cJSON_AddStringToObject(rooms,"room2",room_name[0]); cJSON_AddStringToObject(rooms,"room1",room_name[1]); cJSON_AddStringToObject(rooms,"room3",room_name[2]); cJSON_AddItemToObject(root,"rooms",rooms);
     cJSON_AddStringToObject(root,"brandName",brand_name); cJSON_AddBoolToObject(root,"wifiConnected",sta_connected);
     cJSON_AddBoolToObject(root,"cloudOnline",cloud_client_is_online()); cJSON_AddBoolToObject(root,"userOffline",user_offline_mode);
     cJSON_AddBoolToObject(root,"timeSynced",g_time_synced); cJSON_AddStringToObject(root,"staIp",sta_ip);
@@ -1416,6 +1516,7 @@ static esp_err_t relay_handler(httpd_req_t *req)
     bool changed = relay_state[idx] != (int)state;
     if (changed) {
         relay_state[idx] = (int)state;
+        relay_mark_state_changed(idx);
         gpio_set_level(relay_gpio(idx), relay_output_level((int)state));
     }
     xSemaphoreGive(relay_mutex);
@@ -1730,6 +1831,7 @@ static void schedule_set_relay(int index, int state)
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
     if (relay_enabled[index] && relay_state[index] != state) {
         relay_state[index] = state ? 1 : 0;
+        relay_mark_state_changed(index);
         gpio_set_level(relay_gpio(index), relay_output_level(relay_state[index]));
         changed = true;
     }
@@ -1947,11 +2049,13 @@ static esp_err_t relay_config_post_handler(httpd_req_t *req)
 
         if (!relay_enabled[i]) {
             relay_state[i] = 0;
+            relay_mark_state_changed(i);
             gpio_set_level(relay_gpio(i), relay_output_level(0));
         } else if (i >= 3 && !old_enabled[i]) {
             
             bool on = (i < SWITCH_COUNT) ? read_switch_state(i) : false;
             relay_state[i] = on ? 1 : 0;
+            relay_mark_state_changed(i);
             gpio_set_level(relay_gpio(i), relay_output_level(on ? 1 : 0));
         }
     }
@@ -2173,6 +2277,7 @@ static void mqtt_set_relay_from_topic(const char *topic, const char *data, int d
     bool changed = relay_enabled[idx] && relay_state[idx] != (on ? 1 : 0);
     if (changed) {
         relay_state[idx] = on ? 1 : 0;
+        relay_mark_state_changed(idx);
         gpio_set_level(relay_gpio(idx), relay_output_level(relay_state[idx]));
     }
     xSemaphoreGive(relay_mutex);
