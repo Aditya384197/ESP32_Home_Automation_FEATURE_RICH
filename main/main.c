@@ -162,6 +162,11 @@ static const char *HTML_PAGE =
 "<style>\n"
 ":root{color-scheme:light;--bg:#f7f7f7;--card:#fff;--text:#111;--muted:#68686c;--line:#e2e2e4;--accent:#111;--on:#111;--danger:#8a2f2f;--header:#eeeeef;--press:rgba(0,0,0,.045)}\n"
 "@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0c0c0d;--card:#1a1a1b;--text:#f4f4f5;--muted:#96969a;--line:#2b2b2d;--accent:#f4f4f5;--on:#f4f4f5;--danger:#d98f8f;--header:#161617;--press:rgba(255,255,255,.055)}}\n"
+":root[data-theme=\"dark\"]{color-scheme:dark;--bg:#0c0c0d;--card:#1a1a1b;--text:#f4f4f5;--muted:#96969a;--line:#2b2b2d;--accent:#f4f4f5;--on:#f4f4f5;--danger:#d98f8f;--header:#161617;--press:rgba(255,255,255,.055)}\n"
+":root[data-theme=\"light\"]{color-scheme:light;--bg:#f7f7f7;--card:#fff;--text:#111;--muted:#68686c;--line:#e2e2e4;--accent:#111;--on:#111;--danger:#8a2f2f;--header:#eeeeef;--press:rgba(0,0,0,.045)}\n"
+".theme-seg{display:flex;gap:6px;padding:2px 2px 14px}\n"
+".theme-seg button{flex:1;padding:9px 6px;font-size:13px;border-radius:9px}\n"
+".theme-seg button.active{background:var(--on);border-color:var(--on);color:var(--bg)}\n"
 "*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}\n"
 "html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}\n"
 "body{overflow:hidden;overscroll-behavior-y:none}\n"
@@ -244,6 +249,14 @@ static const char *HTML_PAGE =
 "<div class=\"drawer-status status\"><span id=\"onlineDot\" class=\"dot\"></span><span id=\"onlineText\">Checking connection…</span><button id=\"connToggle\" class=\"conn-toggle\" onclick=\"toggleConnectivity()\" title=\"Toggle online/offline\">⏻</button></div></div>\n"
 "<button class=\"icon-btn\" onclick=\"closeSettings()\" aria-label=\"Back\">←</button>\n"
 "</header>\n"
+"<div class=\"card\" style=\"padding:2px 14px\">\n"
+"<div class=\"setting-item\" style=\"cursor:default\" onclick=\"event.stopPropagation()\"><div class=\"setting-icon\">◐</div><div><div class=\"setting-title\">Appearance</div><div class=\"setting-desc\">Light, dark, or match your phone</div></div></div>\n"
+"<div class=\"theme-seg\" id=\"themeSeg\">\n"
+"<button data-th=\"auto\" onclick=\"setTheme('auto')\">Auto</button>\n"
+"<button data-th=\"light\" onclick=\"setTheme('light')\">Light</button>\n"
+"<button data-th=\"dark\" onclick=\"setTheme('dark')\">Dark</button>\n"
+"</div>\n"
+"</div>\n"
 "<div class=\"card setting-list\">\n"
 "<div class=\"setting-item\" onclick=\"openSubPage('schedulePage')\"><div class=\"setting-icon\">◷</div><div><div class=\"setting-title\">Schedules</div><div class=\"setting-desc\">Independent weekly schedules for every relay</div></div><div class=\"chevron\">›</div></div>\n"
 "<div class=\"setting-item\" onclick=\"openSubPage('brandPage')\"><div class=\"setting-icon\">✎</div><div><div class=\"setting-title\">Custom Logo / Name</div><div class=\"setting-desc\">Choose the text shown on the main control page</div></div><div class=\"chevron\">›</div></div>\n"
@@ -368,6 +381,14 @@ static const char *HTML_PAGE =
 "const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\n"
 "const $=id=>document.getElementById(id);\n"
 "function esc(s){return String(s == null ? '' : s).replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',\"'\":'&#39;','\"':'&quot;'}[c]))}\n"
+"\n"
+"function applyTheme(t){\n"
+"  if(t==='auto') document.documentElement.removeAttribute('data-theme');\n"
+"  else document.documentElement.setAttribute('data-theme',t);\n"
+"  document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.th===t));\n"
+"}\n"
+"function setTheme(t){ try{localStorage.setItem('theme',t)}catch(e){} applyTheme(t); }\n"
+"applyTheme((function(){try{return localStorage.getItem('theme')||'auto'}catch(e){return 'auto'}})());\n"
 "\n"
 "function fitBrand(){\n"
 "  const el=$('brandTitle'); if(!el) return; const box=el.parentElement;\n"
@@ -818,13 +839,13 @@ static esp_err_t save_relay_config(void)
     uint8_t states[RELAY_COUNT];
     char names[RELAY_COUNT][MAX_RELAY_NAME_LEN + 1];
 
-    
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
     for (int i = 0; i < RELAY_COUNT; ++i) {
         enabled[i] = relay_enabled[i] ? 1 : 0;
         states[i] = relay_state[i] ? 1 : 0;
     }
     memcpy(names, relay_name, sizeof(names));
+    xSemaphoreGive(relay_mutex);
 
     xSemaphoreTake(storage_mutex, portMAX_DELAY);
     nvs_handle_t h;
@@ -837,7 +858,6 @@ static esp_err_t save_relay_config(void)
         nvs_close(h);
     }
     xSemaphoreGive(storage_mutex);
-    xSemaphoreGive(relay_mutex);
 
     if (err != ESP_OK) ESP_LOGE(TAG, "Relay config NVS save failed: %s", esp_err_to_name(err));
     return err;
