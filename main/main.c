@@ -141,9 +141,9 @@ static TaskHandle_t relay_save_task_handle = NULL;
 static httpd_handle_t http_server = NULL;
 static TaskHandle_t schedule_task_handle = NULL;
 static TaskHandle_t sta_reconnect_task_handle = NULL;
-static bool schedule_was_active[RELAY_COUNT] = {false, false, false, false, false};
-static bool schedule_override[RELAY_COUNT] = {false, false, false, false, false};
-static int schedule_revert_state[RELAY_COUNT] = {0, 0, 0, 0, 0};
+static bool schedule_was_active[RELAY_COUNT] = {0};
+static bool schedule_override[RELAY_COUNT] = {0};
+static int schedule_revert_state[RELAY_COUNT] = {0};
 static volatile bool g_time_synced = false;
 
 static void schedule_note_manual_change(int index)
@@ -180,10 +180,11 @@ static const char *HTML_PAGE =
 ".settings-btn{grid-column:3;width:42px;height:42px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer}\n"
 ".settings-btn:active{transform:scale(.94)}\n"
 ".card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,.04)}\n"
-"#controls{flex:1;display:grid;grid-template-rows:none;width:100%;overflow-y:auto;overflow-x:hidden;padding:12px;gap:10px;transition:filter .32s ease}\n"
+"#controls{flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:max-content;align-content:start;width:100%;overflow-y:auto;overflow-x:hidden;padding:12px;gap:10px;transition:filter .32s ease}\n"
+"#controls>.relay-row,#controls>.room-card{width:100%;max-width:none;margin:0;min-width:0}\n"
 ".relay-row{display:flex;align-items:center;justify-content:space-between;gap:15px;min-height:62px;padding:0 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);cursor:pointer;user-select:none;-webkit-user-select:none;transition:background-color .18s cubic-bezier(.25,.8,.25,1),transform .16s cubic-bezier(.25,.8,.25,1),box-shadow .18s ease;max-width:680px;margin:0 auto;width:100%}\n"
 ".relay-row:active{background:var(--press);transform:scale(.982);box-shadow:0 1px 2px rgba(0,0,0,.06)}\n"
-".room-card{background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:0 3px 12px rgba(0,0,0,.055);overflow:hidden}.room-head{display:flex;align-items:center;justify-content:space-between;min-height:62px;padding:0 18px;cursor:pointer}.room-title{font-size:17px;font-weight:700}.room-count{font-size:11px;color:var(--muted);margin-top:2px}.room-chevron{font-size:22px;color:var(--muted);transition:transform .22s ease}.room-card.open .room-chevron{transform:rotate(90deg)}.room-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s ease}.room-card.open .room-panel{grid-template-rows:1fr}.room-panel-inner{overflow:hidden;padding:0 10px}.room-card.open .room-panel-inner{padding-bottom:10px}.room-panel .relay-row{min-height:56px;margin-top:8px;box-shadow:none}\n"
+".room-card{background:var(--card);border:1px solid var(--line);border-radius:15px;box-shadow:0 3px 12px rgba(0,0,0,.055);overflow:hidden;min-width:0}.room-head{display:flex;align-items:center;justify-content:space-between;min-height:62px;padding:0 18px;cursor:pointer}.room-title{font-size:17px;font-weight:700}.room-count{font-size:11px;color:var(--muted);margin-top:2px}.room-chevron{font-size:22px;color:var(--muted);transition:transform .22s ease}.room-card.open .room-chevron{transform:rotate(90deg)}.room-panel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s ease}.room-card.open .room-panel{grid-template-rows:1fr}.room-panel-inner{overflow:hidden;padding:0 10px}.room-card.open .room-panel-inner{padding-bottom:10px}.room-panel .relay-row{min-height:56px;margin-top:8px;box-shadow:none}\n"
 ".relay-row .name{font-weight:650;font-size:17px}\n"
 ".relay-row .state{font-size:12.5px;color:var(--muted);margin-top:3px;letter-spacing:.3px;text-transform:uppercase}\n"
 ".switch{position:relative;width:54px;height:31px;flex:none;pointer-events:none}\n"
@@ -483,7 +484,7 @@ static const char *HTML_PAGE =
 "}\n"
 "function relayEnableChanged(i){const en=$('en'+i).checked;$('rn'+i).disabled=!en}\n"
 "async function saveRelayConfig(){\n"
-" let body={};for(let i=0;i<5;i++){const enabled=i<3?true:$('en'+i).checked;let name=$('rn'+i).value.trim()||('Relay '+(i+1));if(name.length>31)return $('relaymsg').textContent='Relay name is too long.';body['r'+(i+1)+'_enabled']=enabled;body['r'+(i+1)+'_name']=name}\n"
+" let body={};for(let i=0;i<10;i++){const enabled=i<3?true:$('en'+i).checked;let name=$('rn'+i).value.trim()||('Relay '+(i+1));if(name.length>31)return $('relaymsg').textContent='Relay name is too long.';body['r'+(i+1)+'_enabled']=enabled;body['r'+(i+1)+'_name']=name}\n"
 " $('relaymsg').textContent='Saving...';try{const r=await fetch('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'save failed');relayCfg=d.config||relayCfg;$('relaymsg').textContent='Saved successfully.';renderRelayConfig();render(states)}catch(e){$('relaymsg').textContent=e.message||'Save failed.'}\n"
 "}\n"
 "\n"
@@ -520,7 +521,7 @@ static const char *HTML_PAGE =
 " duration=Math.max(0,Math.min(1439,Number(s.durationMinutes||0))),act=Number(s.action==null?1:s.action),\n"
 " en=s.enabled!==false&&s.enabled!==0,bits=Number(s.days==null?127:s.days);\n"
 " const h12v=h%12===0?12:h%12,ap=h<12?0:1;\n"
-" $('sdRelay').innerHTML=[1,2,3,4,5].map(n=>`<option value=\"${n}\" ${relay===n?'selected':''}>Relay ${n}</option>`).join('');\n"
+" $('sdRelay').innerHTML=[1,2,3,4,5,6,7,8,9,10].map(n=>`<option value=\"${n}\" ${relay===n?'selected':''}>Relay ${n}</option>`).join('');\n"
 " $('sdAction').innerHTML=`<option value=\"1\" ${act===1?'selected':''}>Turn ON</option><option value=\"0\" ${act===0?'selected':''}>Turn OFF</option>`;\n"
 " $('sdHour').innerHTML=buildHour12Options(h12v);\n"
 " $('sdMinute').innerHTML=buildTimeOptions(mi,60);\n"
@@ -773,10 +774,10 @@ static void load_nvs(void)
 
     nvs_close(h);
     ESP_LOGI(TAG, "Internet config: STA=%s cloud=%s device=%s", sta_ssid[0] ? "configured" : "not configured", cloud_url[0] ? cloud_url : "none", device_id[0] ? device_id : "none");
-    ESP_LOGI(TAG, "Restored relay states: %d %d %d %d %d",
-             relay_state[0], relay_state[1], relay_state[2], relay_state[3], relay_state[4]);
-    ESP_LOGI(TAG, "Relay enabled: %d %d %d %d %d",
-             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4]);
+    ESP_LOGI(TAG, "Restored relay states: %d %d %d %d %d %d %d %d %d %d",
+             relay_state[0], relay_state[1], relay_state[2], relay_state[3], relay_state[4], relay_state[5], relay_state[6], relay_state[7], relay_state[8], relay_state[9]);
+    ESP_LOGI(TAG, "Relay enabled: %d %d %d %d %d %d %d %d %d %d",
+             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4], relay_enabled[5], relay_enabled[6], relay_enabled[7], relay_enabled[8], relay_enabled[9]);
 }
 
 static esp_err_t save_relay_states(void)
