@@ -15,7 +15,7 @@ async function deviceToken(env,req){const t=bearer(req);if(!t)return null;const 
 async function canAccess(env,user,deviceId,needed='viewer'){if(!user)return false;if(user.role==='admin')return true;const r=await env.DB.prepare('SELECT role FROM device_users WHERE device_id=? AND user_id=?').bind(deviceId,user.id).first();if(!r)return false;const rank={viewer:0,operator:1,admin:2};return (rank[r.role]??-1)>=(rank[needed]??99);}
 function validDeviceId(id){return /^[A-Za-z0-9_-]{3,63}$/.test(id)}
 function validEmail(e){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)&&e.length<=160}
-function cleanSchedules(arr){if(!Array.isArray(arr)||arr.length>64)return null;const clean=[];for(const s of arr){const relay=Number(s.relay),hour=Number(s.hour),minute=Number(s.minute),action=Number(s.action),days=Number(s.days),durationMinutes=Number(s.durationMinutes||0);if(!Number.isInteger(relay)||relay<1||relay>7||!Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59||![0,1].includes(action)||!Number.isInteger(days)||days<1||days>127||!Number.isInteger(durationMinutes)||durationMinutes<0||durationMinutes>1439)return null;clean.push({relay,hour,minute,action,days,durationMinutes,enabled:s.enabled?1:0});}return clean;}
+function cleanSchedules(arr){if(!Array.isArray(arr)||arr.length>64)return null;const clean=[];for(const s of arr){const relay=Number(s.relay),hour=Number(s.hour),minute=Number(s.minute),action=Number(s.action),days=Number(s.days),durationMinutes=Number(s.durationMinutes||0);if(!Number.isInteger(relay)||relay<1||relay>10||!Number.isInteger(hour)||hour<0||hour>23||!Number.isInteger(minute)||minute<0||minute>59||![0,1].includes(action)||!Number.isInteger(days)||days<1||days>127||!Number.isInteger(durationMinutes)||durationMinutes<0||durationMinutes>1439)return null;clean.push({relay,hour,minute,action,days,durationMinutes,enabled:s.enabled?1:0});}return clean;}
 
 async function bootstrap(env){
   const count=await env.DB.prepare('SELECT COUNT(*) c FROM users').first();
@@ -54,7 +54,7 @@ async function api(env,req,url){
     if(!u)return json({error:'unauthorized'},401);const id=decodeURIComponent(dm[1]);if(!(await canAccess(env,u,id,'viewer')))return json({error:'forbidden'},403);const d=await env.DB.prepare('SELECT id,name,(last_seen>? AND online=1) online,last_seen,states,enabled FROM devices WHERE id=?').bind(now()-15,id).first();return d?json({device:d}):json({error:'not found'},404);
   }
   const cm=p.match(/^\/api\/devices\/([^/]+)\/relay$/);if(cm&&req.method==='POST'){
-    if(!u)return json({error:'unauthorized'},401);const id=decodeURIComponent(cm[1]);if(!(await canAccess(env,u,id,'operator')))return json({error:'forbidden'},403);const b=await body(req),relay=Number(b?.relay),state=Number(b?.state);if(!Number.isInteger(relay)||relay<1||relay>7||![0,1].includes(state))return json({error:'invalid relay/state'},400);await env.DB.prepare('INSERT INTO commands(device_id,relay,state,created_at,expires_at) VALUES(?,?,?,?,?)').bind(id,relay,state,now(),now()+300).run();return json({ok:true});
+    if(!u)return json({error:'unauthorized'},401);const id=decodeURIComponent(cm[1]);if(!(await canAccess(env,u,id,'operator')))return json({error:'forbidden'},403);const b=await body(req),relay=Number(b?.relay),state=Number(b?.state);if(!Number.isInteger(relay)||relay<1||relay>10||![0,1].includes(state))return json({error:'invalid relay/state'},400);await env.DB.prepare('INSERT INTO commands(device_id,relay,state,created_at,expires_at) VALUES(?,?,?,?,?)').bind(id,relay,state,now(),now()+300).run();return json({ok:true});
   }
   const sm=p.match(/^\/api\/devices\/([^/]+)\/schedules$/);if(sm&&req.method==='GET'){
     if(!u)return json({error:'unauthorized'},401);const id=decodeURIComponent(sm[1]);if(!(await canAccess(env,u,id,'viewer')))return json({error:'forbidden'},403);const r=await env.DB.prepare('SELECT id,relay,hour,minute,action,days,enabled,duration_minutes AS durationMinutes FROM schedules WHERE device_id=? ORDER BY id').bind(id).all();return json({schedules:r.results||[]});
@@ -68,7 +68,7 @@ async function api(env,req,url){
   }
   if(p==='/api/device/poll'&&req.method==='POST'){
     const d=await deviceToken(env,req);if(!d)return json({error:'unauthorized'},401);const b=await body(req);if(b?.deviceId!==d.id)return json({error:'device id mismatch'},403);
-    const states=Array.isArray(b.states)?Array.from({length:7},(_,i)=>b.states[i]?1:0):[0,0,0,0,0,0,0];const enabled=Array.isArray(b.enabled)?Array.from({length:7},(_,i)=>!!b.enabled[i]):[true,true,true,true,true,true,true];
+    const states=Array.isArray(b.states)?Array.from({length:5},(_,i)=>b.states[i]?1:0):[0,0,0,0,0];const enabled=Array.isArray(b.enabled)?Array.from({length:5},(_,i)=>!!b.enabled[i]):[true,true,true,false,false];
     const ackIds=Array.isArray(b.ackIds)?b.ackIds.filter(x=>Number.isInteger(Number(x))).map(Number).slice(0,64):[];
     await env.DB.prepare('UPDATE devices SET online=1,last_seen=?,states=?,enabled=? WHERE id=?').bind(now(),JSON.stringify(states),JSON.stringify(enabled),d.id).run();
     if(ackIds.length) await env.DB.prepare(`UPDATE commands SET acknowledged_at=? WHERE device_id=? AND id IN (${ackIds.map(()=>'?').join(',')})`).bind(now(),d.id,...ackIds).run();
