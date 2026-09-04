@@ -40,8 +40,10 @@
 #define RELAY3_GPIO             18
 #define RELAY4_GPIO             19
 #define RELAY5_GPIO             21
+#define RELAY6_GPIO             22
+#define RELAY7_GPIO             23
 
-#define RELAY_COUNT             5
+#define RELAY_COUNT             7
 
 #define SWITCH1_GPIO            32
 #define SWITCH2_GPIO            33
@@ -76,6 +78,7 @@
 #define NVS_KEY_DEVICE_ID       "device_id"
 #define NVS_KEY_DEVICE_TOKEN    "device_token"
 #define NVS_KEY_BRAND_NAME      "brand_name"
+#define NVS_KEY_ROOM_NAMES      "room_names"
 #define NVS_KEY_MQTT_HOST       "mqtt_host"
 #define NVS_KEY_MQTT_PORT       "mqtt_port"
 #define NVS_KEY_MQTT_USER       "mqtt_user"
@@ -94,19 +97,17 @@
 #define MAX_DEVICE_ID_LEN       63
 #define MAX_DEVICE_TOKEN_LEN    127
 #define MAX_BRAND_LEN            40
+#define MAX_ROOM_NAME_LEN        24
 #define MAX_MQTT_HOST_LEN       127
 #define MAX_MQTT_USER_LEN       63
 #define MAX_MQTT_PASS_LEN       63
 
-static int relay_state[RELAY_COUNT] = {0, 0, 0, 0, 0};
-static bool relay_enabled[RELAY_COUNT] = {true, true, true, false, false};
+static int relay_state[RELAY_COUNT] = {0};
+static bool relay_enabled[RELAY_COUNT] = {true, true, true, true, true, true, true};
 static char relay_name[RELAY_COUNT][MAX_RELAY_NAME_LEN + 1] = {
-    "Living Room Light",
-    "Ceiling Fan",
-    "Charging Socket",
-    "Relay 4",
-    "Relay 5"
+    "Relay 1", "Relay 2", "Relay 3", "Relay 4", "Relay 5", "Relay 6", "Relay 7"
 };
+static char room_name[3][MAX_ROOM_NAME_LEN + 1] = {"Room 1", "Room 2", "Room 3"};
 
 static SemaphoreHandle_t relay_mutex;
 static SemaphoreHandle_t storage_mutex;
@@ -160,477 +161,87 @@ static const char *HTML_PAGE =
 "<meta name=\"theme-color\" content=\"#111\">\n"
 "<title>ESP32 Smart Home</title>\n"
 "<style>\n"
-":root{color-scheme:light;--bg:#f7f7f7;--card:#fff;--text:#111;--muted:#68686c;--line:#e2e2e4;--accent:#111;--on:#111;--danger:#8a2f2f;--header:#eeeeef;--press:rgba(0,0,0,.045)}\n"
-"@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0c0c0d;--card:#1a1a1b;--text:#f4f4f5;--muted:#96969a;--line:#2b2b2d;--accent:#f4f4f5;--on:#f4f4f5;--danger:#d98f8f;--header:#161617;--press:rgba(255,255,255,.055)}}\n"
-":root[data-theme=\"dark\"]{color-scheme:dark;--bg:#0c0c0d;--card:#1a1a1b;--text:#f4f4f5;--muted:#96969a;--line:#2b2b2d;--accent:#f4f4f5;--on:#f4f4f5;--danger:#d98f8f;--header:#161617;--press:rgba(255,255,255,.055)}\n"
-":root[data-theme=\"light\"]{color-scheme:light;--bg:#f7f7f7;--card:#fff;--text:#111;--muted:#68686c;--line:#e2e2e4;--accent:#111;--on:#111;--danger:#8a2f2f;--header:#eeeeef;--press:rgba(0,0,0,.045)}\n"
-".theme-seg{display:flex;gap:6px;padding:2px 2px 14px}\n"
-".theme-seg button{flex:1;padding:9px 6px;font-size:13px;border-radius:9px}\n"
-".theme-seg button.active{background:var(--on);border-color:var(--on);color:var(--bg)}\n"
-"*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}\n"
-"html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}\n"
-"body{overflow:hidden;overscroll-behavior-y:none}\n"
-".app{display:flex;flex-direction:column;height:100dvh;width:100%}\n"
-".top{flex:none;background:var(--header);padding:calc(env(safe-area-inset-top,0px) + 16px) 18px 15px;position:relative;z-index:1;transition:filter .32s ease}\n"
-".top:after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;background:var(--line)}\n"
-".topbar{display:grid;grid-template-columns:44px 1fr 44px;align-items:center;gap:12px;max-width:680px;margin:0 auto;width:100%}\n"
-".brand{grid-column:2;text-align:center;overflow:hidden;min-width:0}\n"
-".brand h1{font-size:22px;margin:0;font-weight:700;letter-spacing:.15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:font-size .15s ease}\n"
-".settings-btn{grid-column:3;width:42px;height:42px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:19px;cursor:pointer}\n"
-".settings-btn:active{transform:scale(.94)}\n"
-".card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,.04)}\n"
-"#controls{flex:1;display:grid;grid-template-rows:repeat(5,1fr);width:100%;overflow:hidden;padding:10px 12px;gap:9px;transition:filter .32s ease}\n"
-".relay-row{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:0 20px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.05);cursor:pointer;user-select:none;-webkit-user-select:none;transition:background-color .18s cubic-bezier(.25,.8,.25,1),transform .16s cubic-bezier(.25,.8,.25,1),box-shadow .18s ease;max-width:680px;margin:0 auto;width:100%}\n"
-".relay-row:active{background:var(--press);transform:scale(.982);box-shadow:0 1px 2px rgba(0,0,0,.06)}\n"
-".relay-row .name{font-weight:650;font-size:17px}\n"
-".relay-row .state{font-size:12.5px;color:var(--muted);margin-top:3px;letter-spacing:.3px;text-transform:uppercase}\n"
-".switch{position:relative;width:54px;height:31px;flex:none;pointer-events:none}\n"
-".switch input{opacity:0;width:0;height:0}\n"
-".slider{position:absolute;inset:0;background:var(--line);border-radius:40px;transition:background .18s ease}\n"
-".slider:before{content:'';position:absolute;width:25px;height:25px;left:3px;top:3px;background:var(--card);border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:transform .18s cubic-bezier(.34,1.2,.64,1)}\n"
-"input:checked+.slider{background:var(--on)}input:checked+.slider:before{background:var(--bg);transform:translateX(23px)}\n"
-"button{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:11px 14px;font:inherit;cursor:pointer;transition:transform .16s cubic-bezier(.25,.8,.25,1),opacity .14s ease,box-shadow .16s ease}\n"
-"button:active{transform:scale(.965)}\n"
-"button.primary{background:var(--on);border-color:var(--on);color:var(--bg);box-shadow:0 3px 10px rgba(0,0,0,.14)}button.primary:active{box-shadow:0 1px 4px rgba(0,0,0,.1)}button:disabled{opacity:.5;cursor:not-allowed}\n"
-".msg{font-size:13px;margin-top:10px;color:var(--muted)}.small{font-size:12px;color:var(--muted);line-height:1.45}\n"
-"input[type=text],input[type=password],input[type=file],input[type=number],select{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font:inherit}\n"
-"label.field{display:block;font-size:13px;color:var(--muted);margin:13px 0 6px}.hidden{display:none!important}\n"
-".status{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);flex-wrap:wrap}.dot{width:9px;height:9px;border-radius:50%;background:#8b8b8b}.dot.online{background:var(--text);box-shadow:0 0 0 4px var(--press)}.dot.forced-offline{background:var(--danger)}.online-text{color:var(--text);font-weight:650}\n"
-".conn-toggle{margin-left:6px;padding:5px 10px;font-size:11px;border-radius:20px}.conn-toggle.active{background:var(--danger);border-color:var(--danger);color:#fff}\n"
-".list-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 2px;border-top:1px solid var(--line);cursor:pointer;transition:background-color .12s ease}\n"
-".list-row:first-child{border-top:0}.list-row:active{background:var(--press)}\n"
-".list-row-text{display:flex;flex-direction:column;gap:2px;min-width:0}\n"
-".list-row-text strong{font-size:15px}\n"
-".list-row-sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n"
-".list-row.row-disabled{opacity:.5}\n"
-".time-row{display:flex;align-items:center;gap:8px}.time-row select{flex:2}.time-row select.ampm{flex:1}.time-sep{font-weight:700;color:var(--muted)}\n"
-".time-readout{padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--muted)}\n"
-".schedule-delete-row{margin-top:16px}.schedule-delete{width:100%;color:var(--danger);border-color:var(--danger)}\n"
-".bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.relay-config{margin-top:10px}.relay-config-item{padding:14px 0;border-top:1px solid var(--line)}\n"
-".relay-config-item:first-child{border-top:0}.relay-config-head{display:flex;align-items:center;justify-content:space-between;gap:12px}\n"
-".small-switch{position:relative;width:48px;height:27px;flex:none}.small-switch input{opacity:0;width:0;height:0}.small-slider{position:absolute;inset:0;background:var(--line);border-radius:40px;transition:.14s;cursor:pointer}\n"
-".small-slider:before{content:'';position:absolute;width:21px;height:21px;left:3px;top:3px;background:var(--card);border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:.14s}\n"
-".small-switch input:checked+.small-slider{background:var(--on)}.small-switch input:checked+.small-slider:before{background:var(--bg);transform:translateX(21px)}\n"
-".relay-number{font-weight:650;font-size:15px}.relay-gpio,.relay-switch-gpio{font-size:12px;color:var(--muted);margin-top:3px}\n"
-".setting-list{margin-top:14px}.setting-item{display:flex;align-items:center;gap:14px;padding:15px 2px;border-top:1px solid var(--line);cursor:pointer;transition:background-color .12s ease}\n"
-".setting-item:first-child{border-top:0}.setting-item:active{background:var(--press)}.setting-icon{width:40px;height:40px;border-radius:12px;background:var(--bg);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}\n"
-".setting-title{font-weight:650;font-size:15px}.setting-desc{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.4}.chevron{margin-left:auto;color:var(--muted);font-size:22px}\n"
-".back-row{margin-top:20px;text-align:center}.back-btn{min-width:180px}.drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.34);opacity:0;pointer-events:none;transition:opacity .28s ease;z-index:90}\n"
-".settings-drawer{position:fixed;z-index:100;top:0;right:0;width:min(680px,100%);height:100dvh;background:var(--bg);box-shadow:-12px 0 35px rgba(0,0,0,.18);transform:translate3d(105%,0,0);transition:transform .34s cubic-bezier(.22,.8,.2,1);overflow-y:auto;overscroll-behavior:contain;will-change:transform}\n"
-".settings-drawer.open{transform:translate3d(0,0,0)}.drawer-backdrop.open{opacity:1;pointer-events:auto}body.settings-open .app{filter:none}\n"
-".drawer-inner{min-height:100%;padding:18px 14px 34px}.drawer-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 4px 18px}\n"
-".drawer-title{font-size:23px;font-weight:700}.drawer-sub{font-size:14px;color:var(--muted);margin-top:4px}.drawer-status{margin-top:8px}\n"
-".icon-btn{width:42px;height:42px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;flex:none}\n"
-".subpage{display:none}.subpage.active{display:block;animation:pageIn .28s cubic-bezier(.22,.8,.2,1) both}@keyframes pageIn{from{opacity:0;transform:translate3d(16px,0,0)}to{opacity:1;transform:none}}\n"
-".page-title{font-size:21px;font-weight:700;margin:0}.page-sub{font-size:13px;color:var(--muted);margin-top:4px}.page-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}.page-head .icon-btn{flex:none}\n"
-".info-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:12px 0}\n"
-".diag-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid var(--line);font-size:14px}\n"
-".diag-row:first-child{border-top:0}.diag-row span{color:var(--muted)}\n"
-".schedule-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.days{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.days label{font-size:11px;display:flex;align-items:center;gap:3px}\n"
-"@media(max-width:650px){.schedule-grid{grid-template-columns:1fr}.brand h1{font-size:20px}}\n"
-"@media(prefers-reduced-motion:reduce){.settings-drawer,.drawer-backdrop,.app{transition:none}.subpage.active{animation:none}}\n"
+":root{color-scheme:light;--bg:#f5f6f7;--card:#fff;--text:#121315;--muted:#74777d;--line:#e1e4e8;--panel:#eceff2;--accent:#111;--on:#111;--danger:#a33b3b;--press:rgba(0,0,0,.055);--shadow:0 8px 24px rgba(0,0,0,.08)}\n"
+":root[data-theme=\"dark\"]{color-scheme:dark;--bg:#0d0e10;--card:#191b1f;--text:#f4f5f6;--muted:#9da1a8;--line:#2a2e33;--panel:#15171a;--accent:#f4f5f6;--on:#f4f5f6;--danger:#db8c8c;--press:rgba(255,255,255,.07);--shadow:0 10px 28px rgba(0,0,0,.28)}\n"
+"*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}body{overflow:hidden;overscroll-behavior-y:none}.app{height:100dvh;display:flex;flex-direction:column}\n"
+".top{flex:none;background:var(--panel);border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px;z-index:2}.topbar{max-width:720px;margin:auto;display:grid;grid-template-columns:42px 1fr 42px;gap:10px;align-items:center}.logo-box{width:40px;height:40px;border-radius:13px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;box-shadow:0 4px 10px rgba(0,0,0,.05)}.logo-box svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.brand{text-align:center;min-width:0}.brand h1{margin:0;font-size:23px;line-height:1.1;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.settings-btn,.icon-btn{width:42px;height:42px;border:1px solid var(--line);border-radius:13px;background:var(--card);color:var(--text);display:grid;place-items:center;cursor:pointer}.settings-btn:active,.icon-btn:active,.room-head:active,.relay-card:active,.setting-item:active{transform:scale(.985)}.settings-btn svg,.icon-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}\n"
+"#controls{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px;max-width:720px;width:100%;margin:auto;scrollbar-width:none}#controls::-webkit-scrollbar{display:none}.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.main-relay{min-width:0}.relay-card,.room-card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.relay-card{min-height:76px;padding:13px 14px;display:flex;align-items:center;gap:11px;justify-content:space-between;cursor:pointer}.relay-meta{min-width:0}.relay-name{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.relay-state{font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--muted);margin-top:3px}.switch{position:relative;width:52px;height:30px;flex:none}.switch input{opacity:0;width:0;height:0}.slider{position:absolute;inset:0;background:var(--line);border-radius:99px;transition:.18s}.slider:before{content:\"\";position:absolute;width:24px;height:24px;left:3px;top:3px;background:var(--card);border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.22);transition:transform .2s cubic-bezier(.34,1.2,.64,1)}input:checked+.slider{background:var(--on)}input:checked+.slider:before{transform:translateX(22px);background:var(--bg)}\n"
+".room-card{overflow:hidden}.room-head{width:100%;border:0;background:transparent;color:var(--text);padding:15px 15px;display:flex;align-items:center;gap:11px;text-align:left;cursor:pointer}.room-badge{width:38px;height:38px;border-radius:12px;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;font-weight:800;font-size:14px;flex:none}.room-title-wrap{min-width:0;flex:1}.room-title{font-size:16px;font-weight:750}.room-summary{font-size:11px;color:var(--muted);margin-top:3px}.room-chevron{width:18px;height:18px;transition:transform .24s ease;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.room-card.open .room-chevron{transform:rotate(180deg)}.room-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s cubic-bezier(.22,.8,.2,1);border-top:0}.room-card.open .room-body{grid-template-rows:1fr;border-top:1px solid var(--line)}.room-body-inner{overflow:hidden}.room-controls{padding:10px;display:grid;grid-template-columns:1fr;gap:8px}.compact-relay{min-height:58px;padding:10px 11px;border-radius:13px;box-shadow:none;background:var(--panel)}.compact-relay .relay-name{font-size:14px}.compact-relay .relay-state{font-size:10px}.empty{padding:12px;color:var(--muted);font-size:12px}\n"
+".drawer-backdrop{position:fixed;inset:0;background:rgba(16,20,28,.36);opacity:0;pointer-events:none;transition:opacity .25s;z-index:20}.drawer-backdrop.open{opacity:1;pointer-events:auto}.settings-drawer{position:fixed;inset:0 0 0 auto;width:min(680px,100%);background:var(--bg);transform:translateX(104%);transition:transform .3s cubic-bezier(.22,.8,.2,1);z-index:30;overflow:auto;box-shadow:-14px 0 34px rgba(0,0,0,.18)}.settings-drawer.open{transform:translateX(0)}.drawer-inner{min-height:100%;padding:calc(env(safe-area-inset-top,0px) + 14px) 14px 28px}.drawer-top{display:grid;grid-template-columns:1fr 42px;gap:12px;align-items:center;padding:4px 2px 16px}.drawer-title{font-size:24px;font-weight:800}.drawer-status{margin-top:7px;display:flex;align-items:center;gap:9px}.conn-toggle{width:38px;height:38px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--muted);display:grid;place-items:center;cursor:pointer}.conn-toggle svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.conn-toggle.online{color:var(--text)}.conn-toggle.trying{color:var(--muted);animation:pulse 1.2s ease-in-out infinite}.conn-toggle.offline{color:var(--danger)}@keyframes pulse{50%{opacity:.45;transform:rotate(18deg)}}\n"
+".setting-list{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}.setting-item{display:flex;align-items:center;gap:13px;padding:14px 13px;border-top:1px solid var(--line);cursor:pointer}.setting-item:first-child{border-top:0}.setting-icon{width:40px;height:40px;border-radius:12px;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;font-size:17px;flex:none}.setting-title{font-size:15px;font-weight:700}.chevron{margin-left:auto;color:var(--muted);font-size:22px;line-height:1}.subpage{display:none}.subpage.active{display:block;animation:pageIn .25s ease}@keyframes pageIn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}.page-head{display:grid;grid-template-columns:42px 1fr;gap:10px;align-items:center;margin-bottom:15px}.page-title{font-size:21px;font-weight:800}.page-sub{font-size:12px;color:var(--muted);margin-top:3px}.info-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:15px;box-shadow:var(--shadow)}.field{display:block;font-size:12px;color:var(--muted);margin:11px 0 6px}.field:first-child{margin-top:0}input[type=text],input[type=password],input[type=number],select{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--text);font:inherit}.bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}button{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:11px;padding:10px 13px;font:inherit;cursor:pointer}button.primary{background:var(--on);border-color:var(--on);color:var(--bg)}button:disabled{opacity:.5}.msg{font-size:12px;color:var(--muted);margin-top:9px}.small{font-size:12px;color:var(--muted);line-height:1.45}.diag-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid var(--line);font-size:13px}.diag-row:first-child{border-top:0}.diag-row span{color:var(--muted)}.theme-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:4px}.theme-seg button.active{background:var(--on);color:var(--bg);border-color:var(--on)}.relay-config-item{padding:14px 0;border-top:1px solid var(--line)}.relay-config-item:first-child{border-top:0}.relay-config-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.relay-number{font-weight:750}.relay-gpio,.relay-switch-gpio{font-size:11px;color:var(--muted);margin-top:3px}.small-switch{position:relative;width:46px;height:26px;flex:none}.small-switch input{opacity:0;width:0;height:0}.small-slider{position:absolute;inset:0;background:var(--line);border-radius:99px}.small-slider:before{content:\"\";position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;background:var(--card);transition:.14s;box-shadow:0 1px 3px rgba(0,0,0,.22)}.small-switch input:checked+.small-slider{background:var(--on)}.small-switch input:checked+.small-slider:before{transform:translateX(20px);background:var(--bg)}.room-name-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.room-name-grid .full{grid-column:1/-1}.days{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.days label{font-size:11px;display:flex;align-items:center;gap:3px}.schedule-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.time-row{display:flex;gap:7px;align-items:center}.time-row select{flex:1}.time-row .ampm{flex:.72}.time-sep{font-weight:800;color:var(--muted)}.time-readout{padding:11px;border:1px solid var(--line);border-radius:11px;color:var(--muted);background:var(--bg);font-size:12px}.list-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 2px;border-top:1px solid var(--line);cursor:pointer}.list-row:first-child{border-top:0}.list-row strong{font-size:13px}.list-row-sub{display:block;color:var(--muted);font-size:11px;margin-top:3px}.row-disabled{opacity:.48}.back-row{margin-top:16px;text-align:center}.back-btn{min-width:180px}\n"
+"@media(max-width:560px){.grid-2{gap:8px}.room-name-grid,.schedule-grid{grid-template-columns:1fr}.brand h1{font-size:21px}.relay-card{min-height:70px;padding:11px 12px}}\n"
+"@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}\n"
 "</style>\n"
 "</head>\n"
 "<body>\n"
 "<div class=\"app\">\n"
 "<header class=\"top\"><div class=\"topbar\">\n"
+"<div class=\"logo-box\" aria-label=\"Logo\"><svg viewBox=\"0 0 24 24\"><path d=\"M3 10.5 12 3l9 7.5\"></path><path d=\"M5.5 9.5V21h13V9.5\"></path><path d=\"M9 21v-6h6v6\"></path></svg></div>\n"
 "<div class=\"brand\"><h1 id=\"brandTitle\">Smart Home</h1></div>\n"
-"<button class=\"settings-btn\" onclick=\"openSettings()\" aria-label=\"Settings\" title=\"Settings\">⚙</button>\n"
+"<button class=\"settings-btn\" onclick=\"openSettings()\" aria-label=\"Settings\"><svg viewBox=\"0 0 24 24\"><path d=\"M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z\"></path><path d=\"m19 13 .1-.9-.1-.9 2-1.5-2-3.4-2.4 1a8 8 0 0 0-1.5-.9L14.8 3h-3.6l-.3 2.4c-.5.2-1 .5-1.5.9L7 6.3 5 9.7l2 1.5-.1.9.1.9-2 1.5L7 18l2.4-1c.5.4 1 .7 1.5.9l.3 2.4h3.6l.3-2.4c.5-.2 1-.5 1.5-.9l2.4 1 2-3.4-2-1.6Z\"></path></svg></button>\n"
 "</div></header>\n"
 "<section id=\"controls\"></section>\n"
 "</div>\n"
-"\n"
 "<div id=\"drawerBackdrop\" class=\"drawer-backdrop\" onclick=\"closeSettings()\"></div>\n"
-"<aside id=\"settingsDrawer\" class=\"settings-drawer\" aria-hidden=\"true\">\n"
-"<div class=\"drawer-inner\">\n"
+"<aside id=\"settingsDrawer\" class=\"settings-drawer\" aria-hidden=\"true\"><div class=\"drawer-inner\">\n"
 "<section id=\"settingsHome\" class=\"subpage active\">\n"
-"<header class=\"drawer-top\">\n"
-"<div><div class=\"drawer-title\">Settings</div><div class=\"drawer-sub\">Device configuration</div>\n"
-"<div class=\"drawer-status status\"><span id=\"onlineDot\" class=\"dot\"></span><span id=\"onlineText\">Checking connection…</span><button id=\"connToggle\" class=\"conn-toggle\" onclick=\"toggleConnectivity()\" title=\"Toggle online/offline\">⏻</button></div></div>\n"
-"<button class=\"icon-btn\" onclick=\"closeSettings()\" aria-label=\"Back\">←</button>\n"
-"</header>\n"
-"<div class=\"card\" style=\"padding:2px 14px\">\n"
-"<div class=\"setting-item\" style=\"cursor:default\" onclick=\"event.stopPropagation()\"><div class=\"setting-icon\">◐</div><div><div class=\"setting-title\">Appearance</div><div class=\"setting-desc\">Light, dark, or match your phone</div></div></div>\n"
-"<div class=\"theme-seg\" id=\"themeSeg\">\n"
-"<button data-th=\"auto\" onclick=\"setTheme('auto')\">Auto</button>\n"
-"<button data-th=\"light\" onclick=\"setTheme('light')\">Light</button>\n"
-"<button data-th=\"dark\" onclick=\"setTheme('dark')\">Dark</button>\n"
-"</div>\n"
-"</div>\n"
-"<div class=\"card setting-list\">\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('schedulePage')\"><div class=\"setting-icon\">◷</div><div><div class=\"setting-title\">Schedules</div><div class=\"setting-desc\">Independent weekly schedules for every relay</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('brandPage')\"><div class=\"setting-icon\">✎</div><div><div class=\"setting-title\">Custom Logo / Name</div><div class=\"setting-desc\">Choose the text shown on the main control page</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('relayPage')\"><div class=\"setting-icon\">▣</div><div><div class=\"setting-title\">Relay Configuration</div><div class=\"setting-desc\">Enable Relay 4/5 and rename any relay</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('internetPage')\"><div class=\"setting-icon\">◎</div><div><div class=\"setting-title\">Internet Connection</div><div class=\"setting-desc\">Connect the ESP32 to your home Wi-Fi</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('remotePage')\"><div class=\"setting-icon\">☁</div><div><div class=\"setting-title\">Remote Access</div><div class=\"setting-desc\">Optional cloud control from outside your home network</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('mqttPage')\"><div class=\"setting-icon\">⌁</div><div><div class=\"setting-title\">MQTT / Home Assistant</div><div class=\"setting-desc\">Optional. Connect to a local MQTT broker on your network</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('apPage')\"><div class=\"setting-icon\">≋</div><div><div class=\"setting-title\">AP Configuration</div><div class=\"setting-desc\">Change the ESP32 local Wi-Fi SSID and password</div></div><div class=\"chevron\">›</div></div>\n"
-"<div class=\"setting-item\" onclick=\"openSubPage('diagPage')\"><div class=\"setting-icon\">◈</div><div><div class=\"setting-title\">Diagnostics</div><div class=\"setting-desc\">Memory, signal strength, uptime and mDNS address</div></div><div class=\"chevron\">›</div></div>\n"
-"</div>\n"
-"</section>\n"
-"\n"
-"<section id=\"schedulePage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Schedules</div><div class=\"page-sub\">Stored locally on the ESP32; Internet is not required for execution.</div></div></div>\n"
-"<div class=\"card\" style=\"padding:4px 14px\"><div id=\"scheduleList\"></div></div>\n"
-"<div class=\"bar\"><button onclick=\"addSchedule()\">＋ Add schedule</button></div>\n"
-"<div id=\"scheduleMsg\" class=\"msg\"></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"\n"
-"<section id=\"scheduleDetailPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backFromScheduleDetail()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Schedule</div><div class=\"page-sub\">Runs locally from the ESP32 clock, independent of Internet.</div></div></div>\n"
-"<div class=\"info-card\">\n"
-"<div class=\"schedule-grid\">\n"
-"<div><label class=\"field\">Relay</label><select id=\"sdRelay\"></select></div>\n"
-"<div><label class=\"field\">Action</label><select id=\"sdAction\" onchange=\"updateScheduleDetailEnd()\"></select></div>\n"
-"</div>\n"
-"<label class=\"field\">Start time</label>\n"
-"<div class=\"time-row\"><select id=\"sdHour\" onchange=\"updateScheduleDetailEnd()\"></select><span class=\"time-sep\">:</span><select id=\"sdMinute\" onchange=\"updateScheduleDetailEnd()\"></select><select id=\"sdAmPm\" class=\"ampm\" onchange=\"updateScheduleDetailEnd()\"></select></div>\n"
-"<div class=\"schedule-grid\">\n"
-"<div><label class=\"field\">Duration hours</label><input id=\"sdDurH\" type=\"number\" min=\"0\" max=\"23\" value=\"0\" oninput=\"updateScheduleDetailEnd()\"></div>\n"
-"<div><label class=\"field\">Duration minutes</label><input id=\"sdDurM\" type=\"number\" min=\"0\" max=\"59\" value=\"0\" oninput=\"updateScheduleDetailEnd()\"></div>\n"
-"</div>\n"
-"<label class=\"field\">After the duration</label>\n"
-"<div class=\"time-readout\" id=\"sdEndReadout\">—</div>\n"
-"<label class=\"field\">Repeat on</label>\n"
-"<div class=\"days\" id=\"scheduleDays\"></div>\n"
-"<label class=\"small\" style=\"display:block;margin-top:16px\"><input id=\"sdEnabled\" type=\"checkbox\"> Enabled</label>\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveScheduleDetail()\">Save schedule</button></div>\n"
-"<div id=\"scheduleDetailMsg\" class=\"msg\"></div>\n"
-"<div class=\"schedule-delete-row\"><button class=\"schedule-delete\" onclick=\"deleteScheduleDetail()\">Delete schedule</button></div>\n"
-"</div>\n"
-"</section>\n"
-"\n"
-"<section id=\"brandPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Custom Logo / Name</div><div class=\"page-sub\">Personalize the title shown on the main page</div></div></div>\n"
-"<div class=\"info-card\">\n"
-"<label class=\"field\">Main page text</label><input id=\"brandInput\" type=\"text\" maxlength=\"40\" placeholder=\"Smart Home\">\n"
-"<div class=\"small\">This changes the text only; it does not affect relay names or firmware identity.</div>\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveBrand()\">Save</button></div>\n"
-"<div id=\"brandMsg\" class=\"msg\"></div>\n"
-"</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"\n"
-"<section id=\"relayPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Relay Configuration</div><div class=\"page-sub\">Relay 1-3 are fixed; Relay 4-5 are optional</div></div></div>\n"
-"<div class=\"info-card relay-config\"><div id=\"relayConfigList\"></div><div class=\"bar\"><button class=\"primary\" onclick=\"saveRelayConfig()\">Save Relay Configuration</button></div><div id=\"relaymsg\" class=\"msg\"></div></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"\n"
-"<section id=\"internetPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Internet Connection</div><div class=\"page-sub\">Connect the ESP32 to your home Wi-Fi.</div></div></div>\n"
-"<div class=\"info-card\" id=\"wifiCard\">\n"
-"<div class=\"small\">Connects the ESP32 to your home Wi-Fi. Applies instantly, no restart needed.</div>\n"
-"<label class=\"field\">Home Wi-Fi SSID</label><input id=\"staSsid\" maxlength=\"32\">\n"
-"<label class=\"field\">Home Wi-Fi Password</label><input id=\"staPass\" type=\"password\" maxlength=\"63\">\n"
-"<div id=\"wifiStatus\" class=\"msg\">Not configured</div>\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveWifiSta()\">Connect Wi-Fi</button></div><div id=\"wifiMsg\" class=\"msg\"></div>\n"
-"</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"<section id=\"remotePage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Remote Access</div><div class=\"page-sub\">Optional. Control this device securely from outside your home network.</div></div></div>\n"
-"<div class=\"info-card\" id=\"cloudCard\">\n"
-"<div class=\"small\">Optional. Enables secure remote control from outside your home network. Applies instantly, no restart needed. Leave all three blank to disable.</div>\n"
-"<label class=\"field\">Cloud API URL</label><input id=\"cloudUrl\" type=\"text\" maxlength=\"191\" placeholder=\"https://your-domain.example\">\n"
-"<label class=\"field\">Device ID</label><input id=\"deviceId\" type=\"text\" maxlength=\"63\">\n"
-"<label class=\"field\">Device Token</label><input id=\"deviceToken\" type=\"password\" maxlength=\"127\">\n"
-"<div id=\"cloudStatus\" class=\"msg\">Not configured</div>\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveCloud()\">Save Remote Access</button></div><div id=\"cloudMsg\" class=\"msg\"></div>\n"
-"</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"<section id=\"mqttPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">MQTT / Home Assistant</div><div class=\"page-sub\">Optional. Publishes relay state to a local broker and appears automatically in Home Assistant.</div></div></div>\n"
-"<div class=\"info-card\" id=\"mqttCard\">\n"
-"<label class=\"small\"><input id=\"mqttEnabled\" type=\"checkbox\"> Enable MQTT</label>\n"
-"<label class=\"field\">Broker host or IP</label><input id=\"mqttHost\" type=\"text\" maxlength=\"127\" placeholder=\"192.168.1.10\">\n"
-"<label class=\"field\">Broker port</label><input id=\"mqttPort\" type=\"number\" min=\"1\" max=\"65535\" value=\"1883\">\n"
-"<label class=\"field\">Username <span class=\"small\">(optional)</span></label><input id=\"mqttUser\" type=\"text\" maxlength=\"63\">\n"
-"<label class=\"field\">Password <span class=\"small\">(optional)</span></label><input id=\"mqttPass\" type=\"password\" maxlength=\"63\">\n"
-"<div id=\"mqttStatus\" class=\"msg\">Not configured</div>\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveMqtt()\">Save MQTT Settings</button></div><div id=\"mqttMsg\" class=\"msg\"></div>\n"
-"</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"\n"
-"<section id=\"apPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">AP Configuration</div><div class=\"page-sub\">Change the local ESP32 Wi-Fi settings</div></div></div>\n"
-"<div class=\"info-card\"><label class=\"field\">SSID</label><input id=\"ssid\" maxlength=\"32\"><label class=\"field\">Password (8-63 characters)</label><input id=\"pass\" type=\"password\" maxlength=\"63\">\n"
-"<div class=\"bar\"><button class=\"primary\" onclick=\"saveSettings()\">Save & Restart</button></div><div id=\"setmsg\" class=\"msg\"></div></div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"<section id=\"diagPage\" class=\"subpage\">\n"
-"<div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\">←</button><div><div class=\"page-title\">Diagnostics</div><div class=\"page-sub\">Live device health, refreshed automatically</div></div></div>\n"
-"<div class=\"info-card\">\n"
-"<div class=\"diag-row\"><span>mDNS address</span><strong id=\"diagMdns\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Wi-Fi signal (RSSI)</span><strong id=\"diagRssi\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Free heap</span><strong id=\"diagHeap\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Lowest free heap since boot</span><strong id=\"diagMinHeap\">—</strong></div>\n"
-"<div class=\"diag-row\"><span>Uptime</span><strong id=\"diagUptime\">—</strong></div>\n"
-"</div>\n"
-"<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">← Back to Settings</button></div>\n"
-"</section>\n"
-"\n"
-"</div>\n"
-"</aside>\n"
-"\n"
+"<header class=\"drawer-top\"><div><div class=\"drawer-title\">Settings</div><div class=\"drawer-status\"><button id=\"connToggle\" class=\"conn-toggle\" onclick=\"toggleConnectivity()\" aria-label=\"Connectivity\"><svg id=\"connIcon\" viewBox=\"0 0 24 24\"></svg></button></div></div><button class=\"icon-btn\" onclick=\"closeSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button></header>\n"
+"<div class=\"setting-list\">\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('schedulePage')\"><div class=\"setting-icon\">◷</div><div class=\"setting-title\">Schedule</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('appearancePage')\"><div class=\"setting-icon\">◐</div><div class=\"setting-title\">Appearance</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('brandPage')\"><div class=\"setting-icon\">✎</div><div class=\"setting-title\">Custom Logo / Name</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('relayPage')\"><div class=\"setting-icon\">▣</div><div class=\"setting-title\">Relay Configuration</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('internetPage')\"><div class=\"setting-icon\">◎</div><div class=\"setting-title\">Internet Connection</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('remotePage')\"><div class=\"setting-icon\">☁</div><div class=\"setting-title\">Remote Access</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('mqttPage')\"><div class=\"setting-icon\">⌁</div><div class=\"setting-title\">MQTT / Home Assistant</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('apPage')\"><div class=\"setting-icon\">≋</div><div class=\"setting-title\">AP Configuration</div><div class=\"chevron\">›</div></div>\n"
+"<div class=\"setting-item\" onclick=\"openSubPage('diagPage')\"><div class=\"setting-icon\">◈</div><div class=\"setting-title\">Diagnostics</div><div class=\"chevron\">›</div></div>\n"
+"</div></section>\n"
+"<section id=\"appearancePage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Appearance</div></div><div class=\"info-card\"><div class=\"theme-seg\" id=\"themeSeg\"><button data-th=\"auto\" onclick=\"setTheme('auto')\">Auto</button><button data-th=\"light\" onclick=\"setTheme('light')\">Light</button><button data-th=\"dark\" onclick=\"setTheme('dark')\">Dark</button></div></div></section>\n"
+"<section id=\"brandPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Custom Logo / Name</div></div><div class=\"info-card\"><label class=\"field\">Main page name</label><input id=\"brandInput\" type=\"text\" maxlength=\"40\"><div class=\"bar\"><button class=\"primary\" onclick=\"saveBrand()\">Save</button></div><div id=\"brandMsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"relayPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Relay Configuration</div></div><div class=\"info-card\"><div class=\"room-name-grid\"><div><label class=\"field\">Room 1</label><input id=\"room1Name\" maxlength=\"24\"></div><div><label class=\"field\">Room 2</label><input id=\"room2Name\" maxlength=\"24\"></div><div class=\"full\"><label class=\"field\">Room 3</label><input id=\"room3Name\" maxlength=\"24\"></div></div><div id=\"relayConfigList\"></div><div class=\"bar\"><button class=\"primary\" onclick=\"saveRelayConfig()\">Save</button></div><div id=\"relaymsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"internetPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Internet Connection</div></div><div class=\"info-card\"><label class=\"field\">Home Wi-Fi SSID</label><input id=\"staSsid\" maxlength=\"32\"><label class=\"field\">Home Wi-Fi Password</label><input id=\"staPass\" type=\"password\" maxlength=\"63\"><div id=\"wifiStatus\" class=\"msg\">Not configured</div><div class=\"bar\"><button class=\"primary\" onclick=\"saveWifiSta()\">Connect Wi-Fi</button></div><div id=\"wifiMsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"remotePage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Remote Access</div></div><div class=\"info-card\"><label class=\"field\">Cloud API URL</label><input id=\"cloudUrl\" maxlength=\"191\"><label class=\"field\">Device ID</label><input id=\"deviceId\" maxlength=\"63\"><label class=\"field\">Device Token</label><input id=\"deviceToken\" type=\"password\" maxlength=\"127\"><div id=\"cloudStatus\" class=\"msg\">Not configured</div><div class=\"bar\"><button class=\"primary\" onclick=\"saveCloud()\">Save</button></div><div id=\"cloudMsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"mqttPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">MQTT / Home Assistant</div></div><div class=\"info-card\"><label class=\"small\"><input id=\"mqttEnabled\" type=\"checkbox\"> Enable MQTT</label><label class=\"field\">Broker host or IP</label><input id=\"mqttHost\" maxlength=\"127\"><label class=\"field\">Broker port</label><input id=\"mqttPort\" type=\"number\" min=\"1\" max=\"65535\" value=\"1883\"><label class=\"field\">Username</label><input id=\"mqttUser\" maxlength=\"63\"><label class=\"field\">Password</label><input id=\"mqttPass\" type=\"password\" maxlength=\"63\"><div id=\"mqttStatus\" class=\"msg\">Not configured</div><div class=\"bar\"><button class=\"primary\" onclick=\"saveMqtt()\">Save</button></div><div id=\"mqttMsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"apPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">AP Configuration</div></div><div class=\"info-card\"><label class=\"field\">SSID</label><input id=\"ssid\" maxlength=\"32\"><label class=\"field\">Password</label><input id=\"pass\" type=\"password\" maxlength=\"63\"><div class=\"bar\"><button class=\"primary\" onclick=\"saveSettings()\">Save & Restart</button></div><div id=\"setmsg\" class=\"msg\"></div></div></section>\n"
+"<section id=\"diagPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Diagnostics</div></div><div class=\"info-card\"><div class=\"diag-row\"><span>mDNS address</span><strong id=\"diagMdns\">—</strong></div><div class=\"diag-row\"><span>Wi-Fi signal (RSSI)</span><strong id=\"diagRssi\">—</strong></div><div class=\"diag-row\"><span>Free heap</span><strong id=\"diagHeap\">—</strong></div><div class=\"diag-row\"><span>Lowest free heap</span><strong id=\"diagMinHeap\">—</strong></div><div class=\"diag-row\"><span>Uptime</span><strong id=\"diagUptime\">—</strong></div><div class=\"diag-row\"><span>Optional GPIO</span><strong id=\"diagOptionalGpio\">—</strong></div></div></section>\n"
+"<section id=\"schedulePage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backToSettings()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Schedule</div></div><div class=\"info-card\"><div id=\"scheduleList\"></div></div><div class=\"bar\"><button onclick=\"addSchedule()\">＋ Add schedule</button></div><div id=\"scheduleMsg\" class=\"msg\"></div></section>\n"
+"<section id=\"scheduleDetailPage\" class=\"subpage\"><div class=\"page-head\"><button class=\"icon-btn\" onclick=\"backFromScheduleDetail()\" aria-label=\"Back\"><svg viewBox=\"0 0 24 24\"><path d=\"m15 18-6-6 6-6\"></path></svg></button><div class=\"page-title\">Schedule</div></div><div class=\"info-card\"><div class=\"schedule-grid\"><div><label class=\"field\">Relay</label><select id=\"sdRelay\"></select></div><div><label class=\"field\">Action</label><select id=\"sdAction\" onchange=\"updateScheduleDetailEnd()\"></select></div></div><label class=\"field\">Start time</label><div class=\"time-row\"><select id=\"sdHour\" onchange=\"updateScheduleDetailEnd()\"></select><span class=\"time-sep\">:</span><select id=\"sdMinute\" onchange=\"updateScheduleDetailEnd()\"></select><select id=\"sdAmPm\" class=\"ampm\" onchange=\"updateScheduleDetailEnd()\"></select></div><div class=\"schedule-grid\"><div><label class=\"field\">Duration hours</label><input id=\"sdDurH\" type=\"number\" min=\"0\" max=\"23\" value=\"0\" oninput=\"updateScheduleDetailEnd()\"></div><div><label class=\"field\">Duration minutes</label><input id=\"sdDurM\" type=\"number\" min=\"0\" max=\"59\" value=\"0\" oninput=\"updateScheduleDetailEnd()\"></div></div><label class=\"field\">After the duration</label><div class=\"time-readout\" id=\"sdEndReadout\">—</div><label class=\"field\">Repeat on</label><div class=\"days\" id=\"scheduleDays\"></div><label class=\"small\" style=\"display:block;margin-top:15px\"><input id=\"sdEnabled\" type=\"checkbox\"> Enabled</label><div class=\"bar\"><button class=\"primary\" onclick=\"saveScheduleDetail()\">Save</button></div><div id=\"scheduleDetailMsg\" class=\"msg\"></div><div class=\"bar\"><button onclick=\"deleteScheduleDetail()\">Delete</button></div></div></section>\n"
+"</div></aside>\n"
 "<script>\n"
-"let relayCfg=[], states=[], relayRequests=Array(5).fill(null), relayTimers=Array(5).fill(null), relaySeq=Array(5).fill(0), relayPending=Array(5).fill(false), schedules=[], userOffline=false, controlsBuilt=false;\n"
-"const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];\n"
-"const $=id=>document.getElementById(id);\n"
-"function esc(s){return String(s == null ? '' : s).replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',\"'\":'&#39;','\"':'&quot;'}[c]))}\n"
-"\n"
-"function applyTheme(t){\n"
-"  if(t==='auto') document.documentElement.removeAttribute('data-theme');\n"
-"  else document.documentElement.setAttribute('data-theme',t);\n"
-"  document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.th===t));\n"
-"}\n"
-"function setTheme(t){ try{localStorage.setItem('theme',t)}catch(e){} applyTheme(t); }\n"
-"applyTheme((function(){try{return localStorage.getItem('theme')||'auto'}catch(e){return 'auto'}})());\n"
-"\n"
-"function fitBrand(){\n"
-"  const el=$('brandTitle'); if(!el) return; const box=el.parentElement;\n"
-"  let size=25; el.style.fontSize=size+'px';\n"
-"  while(el.scrollWidth>box.clientWidth && size>13){size-=1;el.style.fontSize=size+'px';}\n"
-"}\n"
-"\n"
-"function updateOnline(wifi,cloud,offline,timeSynced){\n"
-"  userOffline=!!offline;\n"
-"  $('onlineDot').classList.toggle('online',!!wifi&&!offline);\n"
-"  $('onlineDot').classList.toggle('forced-offline',!!offline);\n"
-"  let msg=offline?'Offline mode • Wi-Fi reconnect paused':(wifi?(cloud?'System online • Cloud remote access active':'System online • Local Wi-Fi connected'):'System offline • Waiting for Wi-Fi');\n"
-"  if(!offline&&wifi&&!timeSynced)msg+=' • Syncing time (schedules paused)';\n"
-"  $('onlineText').textContent=msg;\n"
-"  $('onlineText').classList.toggle('online-text',!!wifi&&!offline);\n"
-"  const btn=$('connToggle');\n"
-"  if(btn){btn.textContent=offline?'▶ Go online':'⏻ Go offline';btn.classList.toggle('active',offline)}\n"
-"}\n"
-"async function toggleConnectivity(){\n"
-"  const btn=$('connToggle');if(btn)btn.disabled=true;\n"
-"  try{\n"
-"    const r=await fetch('/api/connectivity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({offline:!userOffline})});\n"
-"    if(!r.ok)throw 0;\n"
-"    await load();\n"
-"  }catch(e){}\n"
-"  finally{if(btn)btn.disabled=false}\n"
-"}\n"
-"function render(a){\n"
-"  states=a||states;\n"
-"  if(!controlsBuilt){\n"
-"    let h='';\n"
-"    for(let i=0;i<relayCfg.length;i++){\n"
-"      if(!relayCfg[i]?.enabled)continue;\n"
-"      const on=!!states[i];\n"
-"      h+=`<div class=\"relay-row\" data-i=\"${i}\" onclick=\"rowToggle(${i})\"><div><div class=\"name\">${esc(relayCfg[i].name)}</div><div class=\"state\" id=\"st${i}\">${on?'ON':'OFF'}</div></div><span class=\"switch\"><input type=\"checkbox\" id=\"r${i}\" ${on?'checked':''} tabindex=\"-1\"><span class=\"slider\"></span></span></div>`;\n"
-"    }\n"
-"    $('controls').innerHTML=h;\n"
-"    controlsBuilt=true;\n"
-"    return;\n"
-"  }\n"
-"  for(let i=0;i<relayCfg.length;i++){\n"
-"    if(relayPending[i])continue;\n"
-"    if(!relayCfg[i]?.enabled)continue;\n"
-"    const on=!!states[i];\n"
-"    const el=$('r'+i),st=$('st'+i);\n"
-"    if(el)el.checked=on;\n"
-"    if(st)st.textContent=on?'ON':'OFF';\n"
-"  }\n"
-"}\n"
+"const RELAY_TOTAL=7,days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];let relayCfg=[],states=[],rooms=['Room 1','Room 2','Room 3'],relayRequests=Array(RELAY_TOTAL).fill(null),relayTimers=Array(RELAY_TOTAL).fill(null),relaySeq=Array(RELAY_TOTAL).fill(0),relayPending=Array(RELAY_TOTAL).fill(false),schedules=[],userOffline=false,controlsBuilt=false;\n"
+"const $=id=>document.getElementById(id);const esc=s=>String(s==null?'':s).replace(/[&<>'\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',\"'\":'&#39;','\"':'&quot;'}[c]));\n"
+"function applyTheme(t){if(t==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t);document.querySelectorAll('#themeSeg button').forEach(b=>b.classList.toggle('active',b.dataset.th===t))}function setTheme(t){try{localStorage.setItem('theme',t)}catch(e){}applyTheme(t)}applyTheme((()=>{try{return localStorage.getItem('theme')||'auto'}catch(e){return'auto'}})());\n"
+"function fitBrand(){const el=$('brandTitle');if(!el)return;const box=el.parentElement;let s=24;el.style.fontSize=s+'px';while(el.scrollWidth>box.clientWidth&&s>14){el.style.fontSize=(--s)+'px'}}\n"
+"function relayCard(i,compact=false){const r=relayCfg[i];if(!r||!r.enabled)return'';const on=!!states[i],cl=compact?' compact-relay':'';return `<div class=\"relay-card${cl}\" data-i=\"${i}\" onclick=\"rowToggle(${i})\"><div class=\"relay-meta\"><div class=\"relay-name\">${esc(r.name)}</div><div class=\"relay-state\" id=\"st${i}\">${on?'ON':'OFF'}</div></div><span class=\"switch\"><input type=\"checkbox\" id=\"r${i}\" ${on?'checked':''} tabindex=\"-1\"><span class=\"slider\"></span></span></div>`}\n"
+"function roomCard(key,label,relayIndices,open){const active=relayIndices.filter(i=>relayCfg[i]?.enabled).length;const summary=active+' control'+(active===1?'':'s');return `<section class=\"room-card${open?' open':''}\" id=\"${key}Card\"><button class=\"room-head\" onclick=\"toggleRoom('${key}')\"><span class=\"room-badge\">${key.replace('room','R')}</span><span class=\"room-title-wrap\"><span class=\"room-title\">${esc(label)}</span><span class=\"room-summary\">${summary}</span></span><svg class=\"room-chevron\" viewBox=\"0 0 24 24\"><path d=\"m6 9 6 6 6-6\"></path></svg></button><div class=\"room-body\"><div class=\"room-body-inner\"><div class=\"room-controls\">${relayIndices.map(i=>relayCard(i,true)).join('')||'<div class=\"empty\">No enabled relay</div>'}</div></div></div></section>`}\n"
+"function render(){const main1=relayCard(0),main2=relayCard(1);$('controls').innerHTML=`<div class=\"grid-2\"><div class=\"main-relay\">${main1}</div><div class=\"main-relay\">${main2}</div></div>${roomCard('room2',rooms[1],[3],false)}<div class=\"grid-2\">${roomCard('room1',rooms[0],[2,4,5],false)}${roomCard('room3',rooms[2],[0,1,6],false)}</div>`;controlsBuilt=true}\n"
+"function updateStates(){for(let i=0;i<RELAY_TOTAL;i++){if(relayPending[i])continue;const on=!!states[i],el=$('r'+i),st=$('st'+i);if(el)el.checked=on;if(st)st.textContent=on?'ON':'OFF'}}function toggleRoom(id){$(id+'Card').classList.toggle('open')}\n"
 "function rowToggle(i){setRelay(i,!states[i])}\n"
-"function rebuildControls(){controlsBuilt=false;render(states);}\n"
-"async function load(){\n"
-" try{\n"
-"  const r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();\n"
-"  const cfgChanged=JSON.stringify(d.config)!==JSON.stringify(relayCfg);\n"
-"  relayCfg=d.config||relayCfg;\n"
-"  if(cfgChanged)controlsBuilt=false;\n"
-"  render(d.states||states);\n"
-"  const brandText=d.brandName||'Smart Home';\n"
-"  if($('brandTitle').textContent!==brandText){$('brandTitle').textContent=brandText;fitBrand();}\n"
-"  document.title=brandText;\n"
-"  updateOnline(d.wifiConnected,d.cloudOnline,d.userOffline,d.timeSynced);\n"
-"  updateDiagnostics(d);\n"
-" }catch(e){updateOnline(false,false,userOffline)}\n"
-"}\n"
-"function updateDiagnostics(d){\n"
-" const el=$('diagPage');if(!el||!el.classList.contains('active'))return;\n"
-" $('diagMdns').textContent=(d.mdnsHost||'smarthome')+'.local';\n"
-" $('diagRssi').textContent=(d.rssi==null)?'Not connected':(d.rssi+' dBm');\n"
-" $('diagHeap').textContent=(d.freeHeap!=null)?Math.round(d.freeHeap/1024)+' KB':'—';\n"
-" $('diagMinHeap').textContent=(d.minFreeHeap!=null)?Math.round(d.minFreeHeap/1024)+' KB':'—';\n"
-" if(d.uptimeSeconds!=null){\n"
-"  const s=d.uptimeSeconds,days=Math.floor(s/86400),hrs=Math.floor((s%86400)/3600),mins=Math.floor((s%3600)/60);\n"
-"  $('diagUptime').textContent=(days>0?days+'d ':'')+hrs+'h '+mins+'m';\n"
-" }\n"
-"}\n"
-"function setRelay(i,on){\n"
-" const seq=++relaySeq[i],target=on?1:0,previous=states[i]?1:0;states[i]=target;relayPending[i]=true;\n"
-" const el=$('r'+i),st=$('st'+i);if(el)el.checked=!!target;if(st)st.textContent=target?'ON':'OFF';\n"
-" if(relayTimers[i])clearTimeout(relayTimers[i]);if(relayRequests[i]){try{relayRequests[i].abort()}catch(e){}}\n"
-" relayTimers[i]=setTimeout(()=>{const ctl=new AbortController();relayRequests[i]=ctl;fetch(`/api/relay?relay=${i+1}&state=${target}`,{cache:'no-store',signal:ctl.signal})\n"
-"  .then(r=>{if(!r.ok)throw new Error('Relay command failed');if(seq===relaySeq[i])relayPending[i]=false;})\n"
-"  .catch(e=>{if(e.name==='AbortError')return;if(seq===relaySeq[i]){relayPending[i]=false;states[i]=previous;const x=$('r'+i),s=$('st'+i);if(x)x.checked=!!previous;if(s)s.textContent=previous?'ON':'OFF';}});},35);\n"
-"}\n"
-"function openSettings(){\n"
-" document.body.classList.add('settings-open');$('drawerBackdrop').classList.add('open');$('settingsDrawer').classList.add('open');$('settingsDrawer').setAttribute('aria-hidden','false');\n"
-" showSettingsHome();load();\n"
-"}\n"
-"function closeSettings(){\n"
-" const d=$('settingsDrawer');d.classList.remove('open');$('drawerBackdrop').classList.remove('open');document.body.classList.remove('settings-open');d.setAttribute('aria-hidden','true');\n"
-" setTimeout(showSettingsHome,340);\n"
-"}\n"
-"function showSettingsHome(){document.querySelectorAll('.subpage').forEach(p=>p.classList.remove('active'));$('settingsHome').classList.add('active')}\n"
-"function openSubPage(id){\n"
-" document.querySelectorAll('.subpage').forEach(p=>p.classList.remove('active'));$(id).classList.add('active');\n"
-" if(id==='relayPage')renderRelayConfig();if(id==='apPage')loadSettings();if(id==='internetPage')loadWifiStatus();if(id==='remotePage')loadCloudStatus();if(id==='mqttPage')loadMqtt();if(id==='schedulePage')loadSchedules();if(id==='brandPage')loadBrand();\n"
-"}\n"
-"function backToSettings(){showSettingsHome()}\n"
-"\n"
-"function renderRelayConfig(){\n"
-" let h='';relayCfg.forEach((r,i)=>{const optional=i>=3;\n"
-"  h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay GPIO ${r.gpio}${optional?' · Optional':''}</div><div class=\"relay-switch-gpio\">Physical Switch GPIO ${r.switchGpio}</div></div>${optional?`<label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''} onchange=\"relayEnableChanged(${i})\"><span class=\"small-slider\"></span></label>`:''}</div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\" ${optional&&!r.enabled?'disabled':''}></div>`;\n"
-" });$('relayConfigList').innerHTML=h;\n"
-"}\n"
-"function relayEnableChanged(i){const en=$('en'+i).checked;$('rn'+i).disabled=!en}\n"
-"async function saveRelayConfig(){\n"
-" let body={};for(let i=0;i<5;i++){const enabled=i<3?true:$('en'+i).checked;let name=$('rn'+i).value.trim()||('Relay '+(i+1));if(name.length>31)return $('relaymsg').textContent='Relay name is too long.';body['r'+(i+1)+'_enabled']=enabled;body['r'+(i+1)+'_name']=name}\n"
-" $('relaymsg').textContent='Saving...';try{const r=await fetch('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'save failed');relayCfg=d.config||relayCfg;$('relaymsg').textContent='Saved successfully.';renderRelayConfig();render(states)}catch(e){$('relaymsg').textContent=e.message||'Save failed.'}\n"
-"}\n"
-"\n"
-"function timeFromMinutes(m){m=((m%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}\n"
-"function buildTimeOptions(sel,count){let o='';for(let i=0;i<count;i++)o+=`<option value=\"${i}\" ${i===sel?'selected':''}>${String(i).padStart(2,'0')}</option>`;return o}\n"
-"function buildHour12Options(sel){let o='';for(let i=1;i<=12;i++)o+=`<option value=\"${i}\" ${i===sel?'selected':''}>${i}</option>`;return o}\n"
-"let currentScheduleIndex=-1,scheduleIsNew=false;\n"
-"function scheduleListRow(s,idx){\n"
-" const relay=Number(s.relay||1),h=Number(s.hour==null?0:s.hour),mi=Number(s.minute==null?0:s.minute),act=Number(s.action==null?1:s.action),en=s.enabled!==false&&s.enabled!==0;\n"
-" const h12=h%12===0?12:h%12,ap=h<12?'am':'pm';\n"
-" return `<div class=\"list-row${en?'':' row-disabled'}\" onclick=\"openScheduleDetail(${idx})\"><div class=\"list-row-text\"><strong>Relay ${relay} • ${act===1?'ON':'OFF'}</strong><span class=\"list-row-sub\">${h12}:${String(mi).padStart(2,'0')} ${ap}${en?'':' • disabled'}</span></div><span class=\"chevron\">›</span></div>`;\n"
-"}\n"
-"function renderSchedules(){\n"
-" $('scheduleList').innerHTML=schedules.map((s,i)=>scheduleListRow(s,i)).join('')||'<div class=\"small\" style=\"padding:14px 2px\">No schedules yet. Tap Add schedule.</div>';\n"
-"}\n"
-"async function loadSchedules(){\n"
-" $('scheduleMsg').textContent='Loading\\u2026';\n"
-" try{\n"
-"  const r=await fetch('/api/schedules',{cache:'no-store'});const d=await r.json();\n"
-"  if(!r.ok)throw Error(d.error||'Could not load schedules');\n"
-"  schedules=d.schedules||[];renderSchedules();\n"
-"  $('scheduleMsg').textContent=`${schedules.length} schedule(s) stored on the ESP32.`;\n"
-" }catch(e){$('scheduleMsg').textContent=e.message||'Could not load schedules.'}\n"
-"}\n"
-"function addSchedule(){\n"
-" if(schedules.length>=64)return $('scheduleMsg').textContent='Maximum 64 schedules reached.';\n"
-" schedules.push({relay:1,hour:0,minute:0,action:1,durationMinutes:0,days:127,enabled:true});\n"
-" openScheduleDetail(schedules.length-1,true);\n"
-"}\n"
-"function openScheduleDetail(idx,isNew){\n"
-" currentScheduleIndex=idx;scheduleIsNew=!!isNew;\n"
-" const s=schedules[idx]||{};\n"
-" const relay=Number(s.relay||1),h=Number(s.hour==null?0:s.hour),mi=Number(s.minute==null?0:s.minute),\n"
-" duration=Math.max(0,Math.min(1439,Number(s.durationMinutes||0))),act=Number(s.action==null?1:s.action),\n"
-" en=s.enabled!==false&&s.enabled!==0,bits=Number(s.days==null?127:s.days);\n"
-" const h12v=h%12===0?12:h%12,ap=h<12?0:1;\n"
-" $('sdRelay').innerHTML=[1,2,3,4,5].map(n=>`<option value=\"${n}\" ${relay===n?'selected':''}>Relay ${n}</option>`).join('');\n"
-" $('sdAction').innerHTML=`<option value=\"1\" ${act===1?'selected':''}>Turn ON</option><option value=\"0\" ${act===0?'selected':''}>Turn OFF</option>`;\n"
-" $('sdHour').innerHTML=buildHour12Options(h12v);\n"
-" $('sdMinute').innerHTML=buildTimeOptions(mi,60);\n"
-" $('sdAmPm').innerHTML=`<option value=\"0\" ${ap===0?'selected':''}>AM</option><option value=\"1\" ${ap===1?'selected':''}>PM</option>`;\n"
-" $('sdDurH').value=Math.floor(duration/60);\n"
-" $('sdDurM').value=duration%60;\n"
-" $('sdEnabled').checked=en;\n"
-" $('scheduleDays').innerHTML=days.map((d,i)=>`<label><input class=\"day\" type=\"checkbox\" data-day=\"${i}\" ${(bits&(1<<i))?'checked':''}>${d}</label>`).join('');\n"
-" $('scheduleDetailMsg').textContent='';\n"
-" updateScheduleDetailEnd();\n"
-" openSubPage('scheduleDetailPage');\n"
-"}\n"
-"function readScheduleDetail(){\n"
-" const relay=+$('sdRelay').value,action=+$('sdAction').value;\n"
-" const h12=+$('sdHour').value,ap=+$('sdAmPm').value,minute=+$('sdMinute').value;\n"
-" let hour=h12%12;if(ap===1)hour+=12;\n"
-" let daysMask=0;document.querySelectorAll('#scheduleDays input.day').forEach(x=>{if(x.checked)daysMask|=1<<Number(x.dataset.day)});\n"
-" const durH=Math.max(0,Math.min(23,Number($('sdDurH').value)||0)),durM=Math.max(0,Math.min(59,Number($('sdDurM').value)||0));\n"
-" const duration=Math.min(1439,durH*60+durM);\n"
-" return {relay,hour,minute,action,durationMinutes:duration,days:daysMask,enabled:$('sdEnabled').checked};\n"
-"}\n"
-"function updateScheduleDetailEnd(){\n"
-" const s=readScheduleDetail();\n"
-" const startMin=s.hour*60+s.minute;\n"
-" const revertLabel=s.action===1?'Automatically turns OFF at ':'Automatically turns ON at ';\n"
-" $('sdEndReadout').textContent=s.durationMinutes>0?(revertLabel+timeFromMinutes(startMin+s.durationMinutes)):'No automatic revert (stays until the next matching event).';\n"
-"}\n"
-"async function saveScheduleDetail(){\n"
-" const s=readScheduleDetail();\n"
-" if(s.days<1)return $('scheduleDetailMsg').textContent='Select at least one day.';\n"
-" const btn=document.querySelector('#scheduleDetailPage button.primary');if(btn)btn.disabled=true;\n"
-" schedules[currentScheduleIndex]=s;\n"
-" $('scheduleDetailMsg').textContent='Saving\\u2026';\n"
-" try{\n"
-"  const r=await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedules})});\n"
-"  const d=await r.json().catch(()=>({}));\n"
-"  if(!r.ok)throw Error(d.error||'Save failed');\n"
-"  scheduleIsNew=false;\n"
-"  renderSchedules();\n"
-"  $('scheduleMsg').textContent='Saved on ESP32. Schedules continue during Wi-Fi or Internet outages.';\n"
-"  openSubPage('schedulePage');\n"
-" }catch(e){$('scheduleDetailMsg').textContent=e.message||'Could not save schedule.'}\n"
-" finally{if(btn)btn.disabled=false}\n"
-"}\n"
-"async function deleteScheduleDetail(){\n"
-" schedules.splice(currentScheduleIndex,1);\n"
-" try{\n"
-"  await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedules})});\n"
-" }catch(e){}\n"
-" renderSchedules();\n"
-" $('scheduleMsg').textContent=`${schedules.length} schedule(s) stored on the ESP32.`;\n"
-" openSubPage('schedulePage');\n"
-"}\n"
-"function backFromScheduleDetail(){\n"
-" if(scheduleIsNew)schedules.splice(currentScheduleIndex,1);\n"
-" scheduleIsNew=false;\n"
-" renderSchedules();\n"
-" openSubPage('schedulePage');\n"
-"}\n"
-"async function saveBrand(){const name=$('brandInput').value.trim(),m=$('brandMsg');if(!name||name.length>40)return m.textContent='Enter 1-40 characters.';m.textContent='Saving…';try{const r=await fetch('/api/brand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brandName:name})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');$('brandTitle').textContent=name;m.textContent='Saved successfully.'}catch(e){m.textContent=e.message||'Save failed.'}}\n"
-"\n"
-"async function loadWifiStatus(){try{const r=await fetch('/api/internet',{cache:'no-store'});const d=await r.json();$('staSsid').value=d.staSsid||'';$('staPass').value='';\n"
-" $('wifiStatus').textContent=!d.wifiConfigured?'Wi-Fi not configured yet.':d.connected?('Connected to home Wi-Fi. Open this address on any device on the same Wi-Fi: http://'+(d.staIp||'')):'Configured; waiting for connection. Automatic reconnect is active.';\n"
-"}catch(e){$('wifiStatus').textContent='Could not read Wi-Fi configuration.'}}\n"
-"async function loadCloudStatus(){try{const r=await fetch('/api/internet',{cache:'no-store'});const d=await r.json();$('cloudUrl').value=d.cloudUrl||'';$('deviceId').value=d.deviceId||'';$('deviceToken').value='';\n"
-" $('cloudStatus').textContent=!d.cloudConfigured?'Remote access is off.':d.connected?'Remote access is on.':'Remote access is configured; waiting for Wi-Fi.';\n"
-"}catch(e){$('cloudStatus').textContent='Could not read remote access configuration.'}}\n"
-"async function saveWifiSta(){\n"
-" const ssid=$('staSsid').value.trim(),pass=$('staPass').value,m=$('wifiMsg'),btn=document.querySelector('#wifiCard button.primary');\n"
-" if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return m.textContent='Enter a valid Wi-Fi SSID and password (8-63 characters).';\n"
-" if(btn)btn.disabled=true;m.textContent='Connecting\\u2026';\n"
-" try{const r=await fetch('/api/wifi-sta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent='Saved. Connecting to Wi-Fi\\u2026';setTimeout(loadWifiStatus,3000)}catch(e){m.textContent=e.message||'Could not save Wi-Fi.'}\n"
-" finally{if(btn)btn.disabled=false}\n"
-"}\n"
-"async function saveCloud(){\n"
-" const url=$('cloudUrl').value.trim(),id=$('deviceId').value.trim(),token=$('deviceToken').value.trim(),m=$('cloudMsg'),btn=document.querySelector('#cloudCard button.primary');\n"
-" const any=url||id||token;\n"
-" if(any&&(!url||!id||!token||!url.startsWith('https://')))return m.textContent='Provide URL + Device ID + Device Token together, with an HTTPS URL, or leave all three blank to disable.';\n"
-" if(btn)btn.disabled=true;m.textContent='Saving\\u2026';\n"
-" try{const r=await fetch('/api/internet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cloudUrl:url,deviceId:id,deviceToken:token})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent=any?'Remote access saved and active.':'Remote access disabled.';loadCloudStatus()}catch(e){m.textContent=e.message||'Could not save remote access settings.'}\n"
-" finally{if(btn)btn.disabled=false}\n"
-"}\n"
-"async function loadMqtt(){try{const r=await fetch('/api/mqtt',{cache:'no-store'});const d=await r.json();\n"
-" $('mqttHost').value=d.mqttHost||'';$('mqttPort').value=d.mqttPort||1883;$('mqttUser').value=d.mqttUser||'';$('mqttPass').value='';$('mqttEnabled').checked=!!d.mqttEnabled;\n"
-" $('mqttStatus').textContent=!d.mqttEnabled?'MQTT is off.':(d.mqttConnected?'Connected to broker. Relays appear automatically in Home Assistant.':'Enabled; connecting to broker\\\\u2026');\n"
-"}catch(e){$('mqttStatus').textContent='Could not read MQTT configuration.'}}\n"
-"async function saveMqtt(){\n"
-" const host=$('mqttHost').value.trim(),port=+$('mqttPort').value,user=$('mqttUser').value.trim(),pass=$('mqttPass').value,enabled=$('mqttEnabled').checked,m=$('mqttMsg'),btn=document.querySelector('#mqttCard button.primary');\n"
-" if(enabled&&!host)return m.textContent='Enter a broker host or IP to enable MQTT.';\n"
-" if(port<1||port>65535)return m.textContent='Enter a valid port (1-65535).';\n"
-" if(btn)btn.disabled=true;m.textContent='Saving\\\\u2026';\n"
-" try{const r=await fetch('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mqttHost:host,mqttPort:port,mqttUser:user,mqttPass:pass,mqttEnabled:enabled})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent=enabled?'Saved. Connecting to broker\\\\u2026':'MQTT disabled.';setTimeout(loadMqtt,2500)}catch(e){m.textContent=e.message||'Could not save MQTT settings.'}\n"
-" finally{if(btn)btn.disabled=false}\n"
-"}\n"
-"async function saveSettings(){const ssid=$('ssid').value,pass=$('pass').value,m=$('setmsg');if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return m.textContent='Invalid SSID or password.';m.textContent='Saving and restarting…';try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});if(!r.ok)throw 0}catch(e){m.textContent='Connection lost. The AP may be restarting.'}}\n"
-"async function loadSettings(){try{const r=await fetch('/api/settings',{cache:'no-store'}),d=await r.json();$('ssid').value=d.ssid||''}catch(e){}}\n"
-"\n"
-"load();setInterval(load,1200);\n"
+"function setRelay(i,on){if(!relayCfg[i]?.enabled)return;const seq=++relaySeq[i],target=on?1:0,previous=states[i]?1:0;states[i]=target;relayPending[i]=true;updateStates();if(relayTimers[i])clearTimeout(relayTimers[i]);if(relayRequests[i]){try{relayRequests[i].abort()}catch(e){}}relayTimers[i]=setTimeout(()=>{const ctl=new AbortController();relayRequests[i]=ctl;fetch(`/api/relay?relay=${i+1}&state=${target}`,{cache:'no-store',signal:ctl.signal}).then(r=>{if(!r.ok)throw Error();if(seq===relaySeq[i])relayPending[i]=false}).catch(e=>{if(e.name==='AbortError')return;if(seq===relaySeq[i]){relayPending[i]=false;states[i]=previous;updateStates()}})},35)}\n"
+"function connSvg(type){if(type==='online')return '<path d=\"M5 12a10 10 0 0 1 14 0\"></path><path d=\"M8.5 15a5 5 0 0 1 7 0\"></path><path d=\"M12 18h.01\"></path>';if(type==='trying')return '<path d=\"M4 12a11 11 0 0 1 16 0\"></path><path d=\"M7 15a7 7 0 0 1 10 0\"></path><path d=\"m12 18 .01\"></path>';return '<path d=\"M7 7 17 17\"></path><path d=\"M4 12a11 11 0 0 1 16 0\"></path><path d=\"M7 15a7 7 0 0 1 10 0\"></path>'}\n"
+"function updateOnline(wifi,cloud,offline,timeSynced){userOffline=!!offline;const b=$('connToggle'),state=offline?'offline':(wifi?'online':'trying');b.className='conn-toggle '+state;b.title=offline?'Tap to go online':(wifi?'Tap to go offline':'Connecting to Wi-Fi');$('connIcon').innerHTML=connSvg(state)}\n"
+"async function toggleConnectivity(){const b=$('connToggle');b.disabled=true;try{const r=await fetch('/api/connectivity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({offline:!userOffline})});if(r.ok)await load()}catch(e){}finally{b.disabled=false}}\n"
+"async function load(){try{const r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();relayCfg=d.config||relayCfg;states=d.states||states;rooms=d.roomNames||rooms;if(!controlsBuilt)render();else updateStates();const bt=d.brandName||'Smart Home';if($('brandTitle').textContent!==bt){$('brandTitle').textContent=bt;fitBrand()}document.title=bt;updateOnline(d.wifiConnected,d.cloudOnline,d.userOffline,d.timeSynced);$('diagOptionalGpio').textContent=(d.optionalGpios||[]).join(', ')||'None';updateDiagnostics(d)}catch(e){updateOnline(false,false,userOffline,false)}}\n"
+"function updateDiagnostics(d){if(!$('diagPage').classList.contains('active'))return;$('diagMdns').textContent=(d.mdnsHost||'smarthome')+'.local';$('diagRssi').textContent=d.rssi==null?'Not connected':d.rssi+' dBm';$('diagHeap').textContent=d.freeHeap!=null?Math.round(d.freeHeap/1024)+' KB':'—';$('diagMinHeap').textContent=d.minFreeHeap!=null?Math.round(d.minFreeHeap/1024)+' KB':'—';if(d.uptimeSeconds!=null){const s=d.uptimeSeconds,dy=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);$('diagUptime').textContent=(dy?dy+'d ':'')+h+'h '+m+'m'}}\n"
+"function openSettings(){document.body.classList.add('settings-open');$('drawerBackdrop').classList.add('open');$('settingsDrawer').classList.add('open');$('settingsDrawer').setAttribute('aria-hidden','false');showSettingsHome();load()};function closeSettings(){const d=$('settingsDrawer');d.classList.remove('open');$('drawerBackdrop').classList.remove('open');d.setAttribute('aria-hidden','true');setTimeout(showSettingsHome,300)}function showSettingsHome(){document.querySelectorAll('.subpage').forEach(p=>p.classList.remove('active'));$('settingsHome').classList.add('active')};function openSubPage(id){document.querySelectorAll('.subpage').forEach(p=>p.classList.remove('active'));$(id).classList.add('active');if(id==='relayPage')renderRelayConfig();if(id==='brandPage')loadBrand();if(id==='apPage')loadSettings();if(id==='internetPage')loadWifiStatus();if(id==='remotePage')loadCloudStatus();if(id==='mqttPage')loadMqtt();if(id==='schedulePage')loadSchedules();if(id==='diagPage')load()};function backToSettings(){showSettingsHome()}\n"
+"function renderRelayConfig(){let h='';relayCfg.forEach((r,i)=>{h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay GPIO ${r.gpio}</div><div class=\"relay-switch-gpio\">Physical Switch ${r.switchGpio>=0?'GPIO '+r.switchGpio:'None'}</div></div><label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''}><span class=\"small-slider\"></span></label></div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\"></div>`});$('relayConfigList').innerHTML=h;rooms.forEach((n,i)=>{const el=$('room'+(i+1)+'Name');if(el)el.value=n||('Room '+(i+1))})}\n"
+"async function saveRelayConfig(){const body={};for(let i=0;i<RELAY_TOTAL;i++){body['r'+(i+1)+'_enabled']=$('en'+i).checked;const name=$('rn'+i).value.trim()||('Relay '+(i+1));if(name.length>31)return $('relaymsg').textContent='Relay name is too long.';body['r'+(i+1)+'_name']=name}for(let i=0;i<3;i++){const n=$('room'+(i+1)+'Name').value.trim()||('Room '+(i+1));if(n.length>24)return $('relaymsg').textContent='Room name is too long.';body['room'+(i+1)+'_name']=n}$('relaymsg').textContent='Saving…';try{const r=await fetch('/api/relays',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');relayCfg=d.config||relayCfg;rooms=d.roomNames||rooms;controlsBuilt=false;render();$('relaymsg').textContent='Saved.'}catch(e){$('relaymsg').textContent=e.message||'Save failed.'}}\n"
+"function loadBrand(){fetch('/api/status',{cache:'no-store'}).then(r=>r.json()).then(d=>$('brandInput').value=d.brandName||'Smart Home').catch(()=>{})}async function saveBrand(){const name=$('brandInput').value.trim();if(!name||name.length>40)return $('brandMsg').textContent='Enter 1-40 characters.';try{const r=await fetch('/api/brand',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brandName:name})}),d=await r.json();if(!r.ok)throw Error(d.error||'Save failed');$('brandTitle').textContent=name;fitBrand();$('brandMsg').textContent='Saved.'}catch(e){$('brandMsg').textContent=e.message||'Save failed.'}}\n"
+"function loadSettings(){fetch('/api/settings',{cache:'no-store'}).then(r=>r.json()).then(d=>$('ssid').value=d.ssid||'').catch(()=>{})}async function saveSettings(){const ssid=$('ssid').value,pass=$('pass').value;if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return $('setmsg').textContent='Invalid SSID or password.';$('setmsg').textContent='Saving and restarting…';try{await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})})}catch(e){$('setmsg').textContent='Connection lost. The AP may be restarting.'}}\n"
+"async function loadWifiStatus(){try{const d=await (await fetch('/api/internet',{cache:'no-store'})).json();$('staSsid').value=d.staSsid||'';$('staPass').value='';$('wifiStatus').textContent=!d.wifiConfigured?'Wi-Fi not configured.':d.connected?'Connected.':'Waiting for connection.'}catch(e){}}async function saveWifiSta(){const ssid=$('staSsid').value.trim(),pass=$('staPass').value,m=$('wifiMsg');if(ssid.length<1||ssid.length>32||pass.length<8||pass.length>63)return m.textContent='Invalid Wi-Fi credentials.';try{const r=await fetch('/api/wifi-sta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password:pass})});if(!r.ok)throw Error('Save failed');m.textContent='Saved. Connecting…';setTimeout(loadWifiStatus,2500)}catch(e){m.textContent=e.message||'Save failed.'}}\n"
+"async function loadCloudStatus(){try{const d=await (await fetch('/api/internet',{cache:'no-store'})).json();$('cloudUrl').value=d.cloudUrl||'';$('deviceId').value=d.deviceId||'';$('deviceToken').value='';$('cloudStatus').textContent=!d.cloudConfigured?'Remote access off.':d.connected?'Connected.':'Waiting for Wi-Fi.'}catch(e){}}async function saveCloud(){const url=$('cloudUrl').value.trim(),id=$('deviceId').value.trim(),token=$('deviceToken').value.trim(),m=$('cloudMsg');const any=url||id||token;if(any&&(!url||!id||!token||!url.startsWith('https://')))return m.textContent='Provide URL, Device ID and token, or leave all blank.';try{const r=await fetch('/api/internet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cloudUrl:url,deviceId:id,deviceToken:token})}),d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent=any?'Saved.':'Disabled.';loadCloudStatus()}catch(e){m.textContent=e.message||'Save failed.'}}\n"
+"async function loadMqtt(){try{const d=await (await fetch('/api/mqtt',{cache:'no-store'})).json();$('mqttHost').value=d.mqttHost||'';$('mqttPort').value=d.mqttPort||1883;$('mqttUser').value=d.mqttUser||'';$('mqttPass').value='';$('mqttEnabled').checked=!!d.mqttEnabled;$('mqttStatus').textContent=!d.mqttEnabled?'MQTT off.':d.mqttConnected?'Connected.':'Waiting for broker.'}catch(e){}}async function saveMqtt(){const host=$('mqttHost').value.trim(),port=+$('mqttPort').value,user=$('mqttUser').value.trim(),pass=$('mqttPass').value,enabled=$('mqttEnabled').checked,m=$('mqttMsg');if(enabled&&!host)return m.textContent='Enter broker host or IP.';if(port<1||port>65535)return m.textContent='Invalid port.';try{const r=await fetch('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mqttHost:host,mqttPort:port,mqttUser:user,mqttPass:pass,mqttEnabled:enabled})}),d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');m.textContent=enabled?'Saved.':'Disabled.';setTimeout(loadMqtt,1800)}catch(e){m.textContent=e.message||'Save failed.'}}\n"
+"function timeFromMinutes(m){m=((m%1440)+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}function buildTimeOptions(sel,count){let o='';for(let i=0;i<count;i++)o+=`<option value=\"${i}\" ${i===sel?'selected':''}>${String(i).padStart(2,'0')}</option>`;return o}function buildHour12Options(sel){let o='';for(let i=1;i<=12;i++)o+=`<option value=\"${i}\" ${i===sel?'selected':''}>${i}</option>`;return o}\n"
+"let currentScheduleIndex=-1,scheduleIsNew=false;function renderSchedules(){$('scheduleList').innerHTML=schedules.map((s,i)=>`<div class=\"list-row${s.enabled===false||s.enabled===0?' row-disabled':''}\" onclick=\"openScheduleDetail(${i})\"><div><strong>Relay ${Number(s.relay||1)} • ${Number(s.action||0)?'ON':'OFF'}</strong><span class=\"list-row-sub\">${(Number(s.hour)||0).toString().padStart(2,'0')}:${String(Number(s.minute)||0).padStart(2,'0')}</span></div><span class=\"chevron\">›</span></div>`).join('')||'<div class=\"small\">No schedules yet.</div>'}\n"
+"async function loadSchedules(){try{const r=await fetch('/api/schedules',{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error||'Could not load schedules');schedules=d.schedules||[];renderSchedules();$('scheduleMsg').textContent=schedules.length+' schedule(s) stored.'}catch(e){$('scheduleMsg').textContent=e.message||'Could not load schedules.'}}function addSchedule(){if(schedules.length>=64)return $('scheduleMsg').textContent='Maximum 64 schedules reached.';schedules.push({relay:1,hour:0,minute:0,action:1,durationMinutes:0,days:127,enabled:true});openScheduleDetail(schedules.length-1,true)}\n"
+"function openScheduleDetail(idx,isNew){currentScheduleIndex=idx;scheduleIsNew=!!isNew;const s=schedules[idx]||{},relay=Number(s.relay||1),h=Number(s.hour||0),mi=Number(s.minute||0),dur=Math.max(0,Math.min(1439,Number(s.durationMinutes||0))),act=Number(s.action==null?1:s.action),en=s.enabled!==false&&s.enabled!==0,bits=Number(s.days==null?127:s.days);$('sdRelay').innerHTML=Array.from({length:RELAY_TOTAL},(_,i)=>`<option value=\"${i+1}\" ${relay===i+1?'selected':''}>Relay ${i+1}</option>`).join('');$('sdAction').innerHTML=`<option value=\"1\" ${act===1?'selected':''}>Turn ON</option><option value=\"0\" ${act===0?'selected':''}>Turn OFF</option>`;$('sdHour').innerHTML=buildHour12Options(h%12===0?12:h%12);$('sdMinute').innerHTML=buildTimeOptions(mi,60);$('sdAmPm').innerHTML=`<option value=\"0\" ${h<12?'selected':''}>AM</option><option value=\"1\" ${h>=12?'selected':''}>PM</option>`;$('sdDurH').value=Math.floor(dur/60);$('sdDurM').value=dur%60;$('sdEnabled').checked=en;$('scheduleDays').innerHTML=days.map((d,i)=>`<label><input class=\"day\" type=\"checkbox\" data-day=\"${i}\" ${(bits&(1<<i))?'checked':''}>${d}</label>`).join('');$('scheduleDetailMsg').textContent='';updateScheduleDetailEnd();openSubPage('scheduleDetailPage')}\n"
+"function readScheduleDetail(){const relay=+$('sdRelay').value,action=+$('sdAction').value,h12=+$('sdHour').value,ap=+$('sdAmPm').value,minute=+$('sdMinute').value;let hour=h12%12;if(ap===1)hour+=12;let daysMask=0;document.querySelectorAll('#scheduleDays input.day').forEach(x=>{if(x.checked)daysMask|=1<<Number(x.dataset.day)});const durH=Math.max(0,Math.min(23,Number($('sdDurH').value)||0)),durM=Math.max(0,Math.min(59,Number($('sdDurM').value)||0));return{relay,hour,minute,action,durationMinutes:Math.min(1439,durH*60+durM),days:daysMask,enabled:$('sdEnabled').checked}}\n"
+"function updateScheduleDetailEnd(){const s=readScheduleDetail(),label=s.action===1?'Automatically turns OFF at ':'Automatically turns ON at ';$('sdEndReadout').textContent=s.durationMinutes?label+timeFromMinutes(s.hour*60+s.minute+s.durationMinutes):'No automatic revert.'}\n"
+"async function saveScheduleDetail(){const s=readScheduleDetail();if(!s.days)return $('scheduleDetailMsg').textContent='Select at least one day.';schedules[currentScheduleIndex]=s;try{const r=await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedules})}),d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Save failed');scheduleIsNew=false;$('scheduleDetailMsg').textContent='Saved.';renderSchedules();openSubPage('schedulePage')}catch(e){$('scheduleDetailMsg').textContent=e.message||'Save failed.'}}\n"
+"async function deleteScheduleDetail(){schedules.splice(currentScheduleIndex,1);try{await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedules})})}catch(e){}renderSchedules();openSubPage('schedulePage')}\n"
+"function backFromScheduleDetail(){if(scheduleIsNew)schedules.splice(currentScheduleIndex,1);scheduleIsNew=false;renderSchedules();openSubPage('schedulePage')}\n"
+"fitBrand();load();setInterval(load,1500);window.addEventListener('resize',fitBrand);\n"
 "</script>\n"
 "</body></html>\n"
 ;
@@ -695,14 +306,12 @@ static void load_defaults(void)
 
     for (int i = 0; i < RELAY_COUNT; ++i) {
         relay_state[i] = 0;
-        relay_enabled[i] = (i < 3);
+        relay_enabled[i] = true;
+        snprintf(relay_name[i], sizeof(relay_name[i]), "Relay %d", i + 1);
     }
-
-    strlcpy(relay_name[0], "Living Room Light", sizeof(relay_name[0]));
-    strlcpy(relay_name[1], "Ceiling Fan", sizeof(relay_name[1]));
-    strlcpy(relay_name[2], "Charging Socket", sizeof(relay_name[2]));
-    strlcpy(relay_name[3], "Relay 4", sizeof(relay_name[3]));
-    strlcpy(relay_name[4], "Relay 5", sizeof(relay_name[4]));
+    strlcpy(room_name[0], "Room 1", sizeof(room_name[0]));
+    strlcpy(room_name[1], "Room 2", sizeof(room_name[1]));
+    strlcpy(room_name[2], "Room 3", sizeof(room_name[2]));
 }
 
 static void load_nvs(void)
@@ -722,11 +331,11 @@ static void load_nvs(void)
         for (int i = 0; i < RELAY_COUNT; ++i) relay_state[i] = states[i] ? 1 : 0;
     }
 
-    uint8_t enabled[RELAY_COUNT] = {1, 1, 1, 0, 0};
+    uint8_t enabled[RELAY_COUNT] = {1, 1, 1, 1, 1, 1, 1};
     sz = sizeof(enabled);
     if (nvs_get_blob(h, NVS_KEY_RELAY_ENABLED, enabled, &sz) == ESP_OK && sz == sizeof(enabled)) {
         for (int i = 0; i < RELAY_COUNT; ++i) {
-            relay_enabled[i] = (i < 3) ? true : (enabled[i] != 0);
+            relay_enabled[i] = enabled[i] != 0;
         }
     }
 
@@ -736,12 +345,7 @@ static void load_nvs(void)
         for (int i = 0; i < RELAY_COUNT; ++i) {
             relay_name[i][MAX_RELAY_NAME_LEN] = '\0';
             if (!valid_relay_name(relay_name[i])) {
-                if (i == 0) strlcpy(relay_name[i], "Living Room Light", sizeof(relay_name[i]));
-                else if (i == 1) strlcpy(relay_name[i], "Ceiling Fan", sizeof(relay_name[i]));
-                else if (i == 2) strlcpy(relay_name[i], "Charging Socket", sizeof(relay_name[i]));
-                else {
-                    snprintf(relay_name[i], sizeof(relay_name[i]), "Relay %d", i + 1);
-                }
+                snprintf(relay_name[i], sizeof(relay_name[i]), "Relay %d", i + 1);
             }
         }
     }
@@ -763,6 +367,15 @@ static void load_nvs(void)
     if (nvs_get_str(h, NVS_KEY_BRAND_NAME, tmp_brand, &sz) == ESP_OK &&
         strlen(tmp_brand) >= 1 && strlen(tmp_brand) <= MAX_BRAND_LEN) {
         strlcpy(brand_name, tmp_brand, sizeof(brand_name));
+    }
+
+    size_t rooms_sz = sizeof(room_name);
+    if (nvs_get_blob(h, NVS_KEY_ROOM_NAMES, room_name, &rooms_sz) == ESP_OK && rooms_sz == sizeof(room_name)) {
+        for (int i = 0; i < 3; ++i) {
+            room_name[i][MAX_ROOM_NAME_LEN] = '\0';
+            if (strlen(room_name[i]) < 1 || strlen(room_name[i]) > MAX_ROOM_NAME_LEN)
+                snprintf(room_name[i], sizeof(room_name[i]), "Room %d", i + 1);
+        }
     }
 
     char tmp_sta_ssid[MAX_AP_SSID_LEN + 1] = {0};
@@ -791,10 +404,10 @@ static void load_nvs(void)
 
     nvs_close(h);
     ESP_LOGI(TAG, "Internet config: STA=%s cloud=%s device=%s", sta_ssid[0] ? "configured" : "not configured", cloud_url[0] ? cloud_url : "none", device_id[0] ? device_id : "none");
-    ESP_LOGI(TAG, "Restored relay states: %d %d %d %d %d",
-             relay_state[0], relay_state[1], relay_state[2], relay_state[3], relay_state[4]);
-    ESP_LOGI(TAG, "Relay enabled: %d %d %d %d %d",
-             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4]);
+    ESP_LOGI(TAG, "Restored relay states: %d %d %d %d %d %d %d",
+             relay_state[0], relay_state[1], relay_state[2], relay_state[3], relay_state[4], relay_state[5], relay_state[6]);
+    ESP_LOGI(TAG, "Relay enabled: %d %d %d %d %d %d %d",
+             relay_enabled[0], relay_enabled[1], relay_enabled[2], relay_enabled[3], relay_enabled[4], relay_enabled[5], relay_enabled[6]);
 }
 
 static esp_err_t save_relay_states(void)
@@ -838,6 +451,7 @@ static esp_err_t save_relay_config(void)
     uint8_t enabled[RELAY_COUNT];
     uint8_t states[RELAY_COUNT];
     char names[RELAY_COUNT][MAX_RELAY_NAME_LEN + 1];
+    char rooms[3][MAX_ROOM_NAME_LEN + 1];
 
     xSemaphoreTake(relay_mutex, portMAX_DELAY);
     for (int i = 0; i < RELAY_COUNT; ++i) {
@@ -845,6 +459,7 @@ static esp_err_t save_relay_config(void)
         states[i] = relay_state[i] ? 1 : 0;
     }
     memcpy(names, relay_name, sizeof(names));
+    memcpy(rooms, room_name, sizeof(rooms));
     xSemaphoreGive(relay_mutex);
 
     xSemaphoreTake(storage_mutex, portMAX_DELAY);
@@ -853,6 +468,7 @@ static esp_err_t save_relay_config(void)
     if (err == ESP_OK) {
         err = nvs_set_blob(h, NVS_KEY_RELAY_ENABLED, enabled, sizeof(enabled));
         if (err == ESP_OK) err = nvs_set_blob(h, NVS_KEY_RELAY_NAMES, names, sizeof(names));
+        if (err == ESP_OK) err = nvs_set_blob(h, NVS_KEY_ROOM_NAMES, rooms, sizeof(rooms));
         if (err == ESP_OK) err = nvs_set_blob(h, NVS_KEY_RELAY_STATES, states, sizeof(states));
         if (err == ESP_OK) err = nvs_commit(h);
         nvs_close(h);
@@ -994,7 +610,7 @@ static int relay_output_level(int logical_state)
 static gpio_num_t relay_gpio(int index)
 {
     static const gpio_num_t pins[RELAY_COUNT] = {
-        RELAY1_GPIO, RELAY2_GPIO, RELAY3_GPIO, RELAY4_GPIO, RELAY5_GPIO
+        RELAY1_GPIO, RELAY2_GPIO, RELAY3_GPIO, RELAY4_GPIO, RELAY5_GPIO, RELAY6_GPIO, RELAY7_GPIO
     };
     return pins[index];
 }
@@ -1040,12 +656,14 @@ static gpio_num_t switch_gpio(int index)
     static const gpio_num_t pins[SWITCH_COUNT] = {
         SWITCH1_GPIO, SWITCH2_GPIO, SWITCH3_GPIO, SWITCH4_GPIO, SWITCH5_GPIO
     };
+    if (index < 0 || index >= SWITCH_COUNT) return (gpio_num_t)-1;
     return pins[index];
 }
 
 static bool read_switch_state(int index)
 {
-    return gpio_get_level(switch_gpio(index)) == SWITCH_ACTIVE_LEVEL;
+    gpio_num_t pin = switch_gpio(index);
+    return pin != (gpio_num_t)-1 && gpio_get_level(pin) == SWITCH_ACTIVE_LEVEL;
 }
 
 static void init_switches(void)
@@ -1383,7 +1001,20 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON_AddBoolToObject(o,"enabled",enabled[i]); cJSON_AddStringToObject(o,"name",names[i]);
         cJSON_AddNumberToObject(o,"gpio",relay_gpio(i)); cJSON_AddNumberToObject(o,"switchGpio",switch_gpio(i)); cJSON_AddItemToArray(config,o);
     }
-    cJSON_AddItemToObject(root,"states",states); cJSON_AddItemToObject(root,"config",config);
+    cJSON *rooms = cJSON_CreateArray();
+    cJSON *optional = cJSON_CreateArray();
+    if (!rooms || !optional) { if (rooms) cJSON_Delete(rooms); if (optional) cJSON_Delete(optional); cJSON_Delete(root); cJSON_Delete(states); cJSON_Delete(config); return send_json(req,"{\"error\":\"out of memory\"}","500 Internal Server Error"); }
+    for (int i = 0; i < 3; ++i) cJSON_AddItemToArray(rooms, cJSON_CreateString(room_name[i]));
+    const int used_relays[] = {RELAY1_GPIO, RELAY2_GPIO, RELAY3_GPIO, RELAY4_GPIO, RELAY5_GPIO, RELAY6_GPIO, RELAY7_GPIO, SWITCH1_GPIO, SWITCH2_GPIO, SWITCH3_GPIO, SWITCH4_GPIO, SWITCH5_GPIO};
+    const size_t used_count = sizeof(used_relays) / sizeof(used_relays[0]);
+    static const int optional_candidates[] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15};
+    for (size_t i = 0; i < sizeof(optional_candidates) / sizeof(optional_candidates[0]); ++i) {
+        int pin = optional_candidates[i];
+        bool used = false;
+        for (size_t j = 0; j < used_count; ++j) if (used_relays[j] == pin) { used = true; break; }
+        if (!used) cJSON_AddItemToArray(optional, cJSON_CreateNumber(pin));
+    }
+    cJSON_AddItemToObject(root,"states",states); cJSON_AddItemToObject(root,"config",config); cJSON_AddItemToObject(root,"roomNames",rooms); cJSON_AddItemToObject(root,"optionalGpios",optional);
     cJSON_AddStringToObject(root,"brandName",brand_name); cJSON_AddBoolToObject(root,"wifiConnected",sta_connected);
     cJSON_AddBoolToObject(root,"cloudOnline",cloud_client_is_online()); cJSON_AddBoolToObject(root,"userOffline",user_offline_mode);
     cJSON_AddBoolToObject(root,"timeSynced",g_time_synced); cJSON_AddStringToObject(root,"staIp",sta_ip);
@@ -1941,19 +1572,25 @@ static esp_err_t relay_config_post_handler(httpd_req_t *req)
     for (int i = 0; i < RELAY_COUNT; ++i) {
         char key[16];
 
-        if (i < 3) {
-            new_enabled[i] = true;
-        } else {
-            snprintf(key, sizeof(key), "r%d_enabled", i + 1);
-            if (!json_extract_bool(body, key, &new_enabled[i])) {
-                return send_json(req, "{\"error\":\"invalid relay enable state\"}", "400 Bad Request");
-            }
+        snprintf(key, sizeof(key), "r%d_enabled", i + 1);
+        if (!json_extract_bool(body, key, &new_enabled[i])) {
+            return send_json(req, "{\"error\":\"invalid relay enable state\"}", "400 Bad Request");
         }
 
         snprintf(key, sizeof(key), "r%d_name", i + 1);
         if (!json_extract_string(body, key, new_names[i], sizeof(new_names[i])) ||
             !valid_relay_name(new_names[i])) {
             return send_json(req, "{\"error\":\"invalid relay name\"}", "400 Bad Request");
+        }
+    }
+
+    char new_rooms[3][MAX_ROOM_NAME_LEN + 1];
+    for (int i = 0; i < 3; ++i) {
+        char rkey[20];
+        snprintf(rkey, sizeof(rkey), "room%d_name", i + 1);
+        if (!json_extract_string(body, rkey, new_rooms[i], sizeof(new_rooms[i])) ||
+            strlen(new_rooms[i]) < 1 || strlen(new_rooms[i]) > MAX_ROOM_NAME_LEN) {
+            return send_json(req, "{\"error\":\"invalid room name\"}", "400 Bad Request");
         }
     }
 
@@ -1967,13 +1604,13 @@ static esp_err_t relay_config_post_handler(httpd_req_t *req)
         if (!relay_enabled[i]) {
             relay_state[i] = 0;
             gpio_set_level(relay_gpio(i), relay_output_level(0));
-        } else if (i >= 3 && !old_enabled[i]) {
-            
+        } else if (!old_enabled[i] && i < SWITCH_COUNT) {
             bool on = read_switch_state(i);
             relay_state[i] = on ? 1 : 0;
             gpio_set_level(relay_gpio(i), relay_output_level(on ? 1 : 0));
         }
     }
+    for (int i = 0; i < 3; ++i) strlcpy(room_name[i], new_rooms[i], sizeof(room_name[i]));
     xSemaphoreGive(relay_mutex);
 
     esp_err_t err = save_relay_config();
@@ -1994,6 +1631,9 @@ static esp_err_t relay_config_post_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(o,"gpio",relay_gpio(i)); cJSON_AddNumberToObject(o,"switchGpio",switch_gpio(i)); cJSON_AddItemToArray(config,o);
     }
     cJSON_AddItemToObject(root,"config",config);
+    cJSON *rooms = cJSON_CreateArray();
+    if (rooms) for (int i = 0; i < 3; ++i) cJSON_AddItemToArray(rooms, cJSON_CreateString(room_name[i]));
+    if (rooms) cJSON_AddItemToObject(root,"roomNames",rooms);
     return send_cjson(req,root,"200 OK");
 }
 
@@ -2340,7 +1980,7 @@ void app_main(void)
     ESP_LOGI(TAG, "Offline Smart Home ready");
     ESP_LOGI(TAG, "Control:  http://%s/", AP_IP_ADDR);
     ESP_LOGI(TAG, "AP only: no STA, no Internet");
-    ESP_LOGI(TAG, "Relays: 3 fixed + 2 optional");
+    ESP_LOGI(TAG, "Relays: 7 total (5 physical switch inputs + 2 web-only)");
     ESP_LOGI(TAG, "========================================");
 
     while (1) {
