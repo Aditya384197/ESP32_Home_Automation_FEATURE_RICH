@@ -220,7 +220,7 @@ static void load_schedules(void)
         if (nvs_get_blob(h, NVS_LEGACY_SCHEDULES, legacy, &sz) == ESP_OK && sz == (size_t)old_n * sizeof(legacy_schedule_t)) {
             size_t converted = 0;
             for (size_t i = 0; i < old_n && converted < SCHEDULE_MAX; ++i) {
-                if (legacy[i].relay < 1 || legacy[i].relay > 5 ||
+                if (legacy[i].relay < 1 || legacy[i].relay > 10 ||
                     legacy[i].hour < 0 || legacy[i].hour > 23 ||
                     legacy[i].minute < 0 || legacy[i].minute > 59 ||
                     (legacy[i].action != 0 && legacy[i].action != 1) ||
@@ -278,7 +278,7 @@ static void parse_response(const char *json)
             if (!cJSON_IsNumber(idv) || !cJSON_IsNumber(rv) || !cJSON_IsNumber(sv)) continue;
             int relay = rv->valueint;
             int state = sv->valueint;
-            if (relay >= 1 && relay <= 5 && (state == 0 || state == 1)) {
+            if (relay >= 1 && relay <= 10 && (state == 0 || state == 1)) {
                 g_cfg.command_cb(relay - 1, state, g_cfg.ctx);
                 add_pending_ack((uint32_t)idv->valuedouble);
             }
@@ -302,7 +302,7 @@ static void parse_response(const char *json)
             tmp[n].action = (v=cJSON_GetObjectItemCaseSensitive(x,"action")) ? v->valueint : 0;
             tmp[n].days = (v=cJSON_GetObjectItemCaseSensitive(x,"days")) ? v->valueint : 127;
             tmp[n].duration_minutes = (v=cJSON_GetObjectItemCaseSensitive(x,"durationMinutes")) ? v->valueint : 0;
-            if (tmp[n].relay >= 1 && tmp[n].relay <= 5 && tmp[n].hour < 24 &&
+            if (tmp[n].relay >= 1 && tmp[n].relay <= 10 && tmp[n].hour < 24 &&
                 tmp[n].minute < 60 && (tmp[n].action == 0 || tmp[n].action == 1) &&
                 tmp[n].days >= 1 && tmp[n].days <= 127 && tmp[n].duration_minutes <= 1439) n++;
         }
@@ -417,7 +417,7 @@ bool cloud_client_replace_schedules(const cloud_schedule_t *items, size_t count)
     schedule_t tmp[CLOUD_SCHEDULE_MAX];
     memset(tmp, 0, sizeof(tmp));
     for (size_t i = 0; i < count; ++i) {
-        if (items[i].relay < 1 || items[i].relay > 5 || items[i].hour > 23 || items[i].minute > 59 ||
+        if (items[i].relay < 1 || items[i].relay > 10 || items[i].hour > 23 || items[i].minute > 59 ||
             (items[i].action != 0 && items[i].action != 1) || items[i].days < 1 || items[i].days > 127 ||
             items[i].duration_minutes > 1439) return false;
         tmp[i] = items[i];
