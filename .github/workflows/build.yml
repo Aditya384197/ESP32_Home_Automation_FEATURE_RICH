@@ -88,8 +88,45 @@ jobs:
 
           test -s build/smart_home_merged.bin
 
-          echo "=== Merged image information ==="
-          python -m esptool --chip esp32 image_info build/smart_home_merged.bin
+          # A raw merged flash image starts at flash address 0x000000.
+          # Its gaps are intentionally filled with 0xFF, so it is NOT a
+          # standalone ESP application image and must not be passed to
+          # `esptool image_info`. The three source images were already
+          # validated above; verify the merged file's expected size and
+          # exact bytes at the three flash offsets instead.
+          python - <<'PY'
+          from pathlib import Path
+
+          merged = Path("build/smart_home_merged.bin").read_bytes()
+          boot = Path("build/bootloader/bootloader.bin").read_bytes()
+          part = Path("build/partition_table/partition-table.bin").read_bytes()
+          app = Path("build/smart_home.bin").read_bytes()
+
+          def check(offset, data, name):
+              end = offset + len(data)
+              if end > len(merged):
+                  raise SystemExit(
+                      f"{name}: merged image too small: need 0x{end:x}, got 0x{len(merged):x}"
+                  )
+              if merged[offset:end] != data:
+                  raise SystemExit(
+                      f"{name}: bytes in merged image do not match source image"
+                  )
+              print(f"{name}: verified at 0x{offset:06x}, {len(data)} bytes")
+
+          check(0x1000, boot, "Bootloader")
+          check(0x8000, part, "Partition table")
+          check(0x10000, app, "Factory application")
+
+          # 4 MB ESP32 flash image must fit within 0x400000 bytes.
+          if len(merged) > 0x400000:
+              raise SystemExit(
+                  f"Merged image exceeds 4 MB flash: 0x{len(merged):x} bytes"
+              )
+
+          print(f"Merged raw flash image: {len(merged)} bytes (0x{len(merged):x})")
+          print("Merged image layout verification: PASS")
+          PY
 
           echo "=== Flash layout ==="
           printf '%s\n' \
