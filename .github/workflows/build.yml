@@ -5,14 +5,14 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # इससे आप Actions टैब में जाकर बटन दबाकर भी इसे रन कर सकते हैं
+  workflow_dispatch: 
 
 jobs:
   download-and-zip:
     runs-on: ubuntu-latest
 
     steps:
-    # स्टेप 1: AOSP से केवल म्यूजिक ऐप का कोड क्लोन करना (Fast download के लिए depth=1)
+    # स्टेप 1: सटीक AOSP म्यूज़िक ऐप रिपॉजिटरी URL का उपयोग करके क्लोन करना
     - name: Clone AOSP Music Repository
       run: |
         git clone https://googlesource.com -b main --depth=1 android-16-music-app
@@ -28,4 +28,4 @@ jobs:
       with:
         name: android-16-music-source-code
         path: music_app_source.zip
-        retention-days: 7 # यह ज़िप फ़ाइल आपके GitHub पर 7 दिनों तक सुरक्षित रहेगी
+        retention-days: 7 
