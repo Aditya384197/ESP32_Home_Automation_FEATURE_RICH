@@ -51,11 +51,11 @@
 #define SWITCH1_GPIO            32
 #define SWITCH2_GPIO            33
 #define SWITCH_COUNT            2
-#define SWITCH_ACTIVE_LEVEL     0
+#define SWITCH_ACTIVE_LEVEL     0  // GPIO tied to GND = ON; open input with pull-up = OFF
 #define SWITCH_DEBOUNCE_SAMPLES 3
 #define SWITCH_POLL_MS          20
 
-#define RELAY_ACTIVE_LEVEL      1
+#define RELAY_ACTIVE_LEVEL      0  // Active-LOW relay module: GPIO LOW = ON, HIGH = OFF
 
 #define DEFAULT_AP_SSID         "ESP32-SMART-HOME"
 #define DEFAULT_AP_PASSWORD     "ChangeMe123"
@@ -331,6 +331,7 @@ static const char *HTML_PAGE =
 "<label class=\"field\">Room 1</label><input type=\"text\" id=\"room1Name\" maxlength=\"31\">\n"
 "<label class=\"field\">Room 3</label><input type=\"text\" id=\"room3Name\" maxlength=\"31\">\n"
 "<div class=\"section-title\" style=\"margin-top:18px\">Relays</div>\n"
+"<div class=\"small\" style=\"margin:8px 0 12px\">Relay Output GPIO is the ESP32 pin connected to the relay IN terminal. Physical switch inputs are currently assigned only to Relay 1 (GPIO 32) and Relay 2 (GPIO 33). For those switches: GPIO connected to GND = ON; disconnected = OFF.</div>\n"
 "<div id=\"relayConfigList\"></div>\n"
 "<div class=\"bar\"><button class=\"primary\" onclick=\"saveRelayConfig()\">Save Relay Configuration</button></div><div id=\"relaymsg\" class=\"msg\"></div></div>\n"
 "<div class=\"back-row\"><button class=\"back-btn\" onclick=\"backToSettings()\">\u2190 Back to Settings</button></div>\n"
@@ -550,7 +551,7 @@ static const char *HTML_PAGE =
 " let h='';\n"
 " relayCfg.forEach((r,i)=>{\n"
 "  const optional=i>=3;\n"
-"  h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay GPIO ${r.gpio}${optional?' \u00b7 Optional':''}</div><div class=\"relay-switch-gpio\">Physical Switch GPIO ${r.switchGpio>=0?r.switchGpio:'\u2014'}</div></div>${optional?`<label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''} onchange=\"relayEnableChanged(${i})\"><span class=\"small-slider\"></span></label>`:''}</div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\" ${optional&&!r.enabled?'disabled':''}></div>`;\n"
+"  h+=`<div class=\"relay-config-item\"><div class=\"relay-config-head\"><div><div class=\"relay-number\">Relay ${i+1}</div><div class=\"relay-gpio\">Relay Output GPIO: ${r.gpio}${optional?' \u00b7 Optional':''}</div><div class=\"relay-switch-gpio\">Physical Switch GPIO: ${r.switchGpio>=0?r.switchGpio:'Not assigned'}</div></div>${optional?`<label class=\"small-switch\"><input type=\"checkbox\" id=\"en${i}\" ${r.enabled?'checked':''} onchange=\"relayEnableChanged(${i})\"><span class=\"small-slider\"></span></label>`:''}</div><label class=\"field\">Name</label><input type=\"text\" id=\"rn${i}\" maxlength=\"31\" value=\"${esc(r.name)}\" ${optional&&!r.enabled?'disabled':''}></div>`;\n"
 " });\n"
 " $('relayConfigList').innerHTML=h;\n"
 " const rm=window.roomCfg||{room2:'Room 2',room1:'Room 1',room3:'Room 3'};\n"
@@ -1101,6 +1102,12 @@ static void init_relays(void)
     uint64_t mask = 0;
     for (int i = 0; i < RELAY_COUNT; ++i) mask |= (1ULL << relay_gpio(i));
 
+    /* Preload the logical OFF level before enabling output drivers.
+     * This is especially important for active-LOW relay boards. */
+    for (int i = 0; i < RELAY_COUNT; ++i) {
+        gpio_set_level(relay_gpio(i), relay_output_level(0));
+    }
+
     gpio_config_t io = {
         .pin_bit_mask = mask,
         .mode = GPIO_MODE_OUTPUT,
@@ -1174,7 +1181,6 @@ static void physical_switch_task(void *arg)
 
     for (int i = 0; i < SWITCH_COUNT; ++i) {
         last_raw[i] = gpio_get_level(switch_gpio(i));
-        
         stable[i] = last_raw[i];
         samples[i] = SWITCH_DEBOUNCE_SAMPLES;
     }
@@ -2379,9 +2385,24 @@ void app_main(void)
     load_nvs();
     init_relays();
     init_switches();
+
+    /* The maintained physical switch is authoritative at boot for relays 1-2:
+     * GPIO connected to GND = ON; open/disconnected (pull-up HIGH) = OFF.
+     * Read both positions before restoring relay outputs from the saved NVS state. */
+    vTaskDelay(pdMS_TO_TICKS(SWITCH_POLL_MS * (SWITCH_DEBOUNCE_SAMPLES + 1)));
+    bool boot_switch_state_changed = false;
+    for (int i = 0; i < SWITCH_COUNT; ++i) {
+        int on = read_switch_state(i) ? 1 : 0;
+        if (relay_enabled[i] && relay_state[i] != on) {
+            relay_state[i] = on;
+            relay_mark_state_changed(i);
+            boot_switch_state_changed = true;
+        }
+        ESP_LOGI(TAG, "Physical switch %d boot state -> %s", i + 1,
+                 on ? "ON" : "OFF");
+    }
     apply_all_relays();
 
-    
     esp_task_wdt_config_t wdt_config = {
         .timeout_ms = WATCHDOG_TIMEOUT_MS,
         .idle_core_mask = (1U << portNUM_PROCESSORS) - 1U,
@@ -2396,6 +2417,9 @@ void app_main(void)
     if (save_ok != pdPASS) {
         ESP_LOGE(TAG, "Relay save task creation failed");
         abort();
+    }
+    if (boot_switch_state_changed) {
+        xTaskNotifyGive(relay_save_task_handle);
     }
 
     BaseType_t switch_ok = xTaskCreate(physical_switch_task, "physical_switches", 3072, NULL, 4, &switch_task_handle);
